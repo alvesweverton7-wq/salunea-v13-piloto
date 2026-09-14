@@ -608,7 +608,7 @@
         <small>Gestão inteligente</small>
         <h2>Bem-vindo</h2>
         <p class="muted">Acesse sua conta para continuar.</p>
-        <div class="prepilot-badge" style="display:inline-block;margin:8px 0 2px">Piloto controlado gratuito · 1–3 salões</div>
+        <div class="prepilot-badge" style="display:inline-block;margin:8px 0 2px">Piloto controlado · 1 salão</div>
         <small class="muted" style="display:block">Sem checkout, assinatura ou cobrança automática nesta fase.</small>
         <label>E-mail</label
         ><input id="email" type="email" autocomplete="email" /><label
@@ -800,7 +800,7 @@
         <div class="section">
           <button class="pill" onclick="go('mais')">← Voltar</button>
           <h3>Estoque beta</h3>
-          <p class="muted">Saldo físico e projeção por unidade. Nenhuma alteração é feita nesta tela.</p>
+          <p class="muted">Saldo físico, projeção e movimentações controladas por unidade.</p>
         </div>
         <div id="prepilotStockList" class="prepilot-grid" aria-live="polite">
           <div class="empty">Carregando estoque…</div>
@@ -2415,7 +2415,7 @@
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () =>
           navigator.serviceWorker
-            .register("/sw.js?v=prime-operacional-27")
+            .register("/sw.js?v=prime-operacional-28")
             .catch((error) => reportClientError("service-worker", error)),
         );
       }
