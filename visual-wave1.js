@@ -160,3 +160,52 @@
   sync(document.querySelector(".screen.active")?.id || "inicio");
   setTimeout(decorateAgenda, 250);
 })();
+
+/* C11 closure: render split-payment refunds by payment allocation and bind actions without inline JS. */
+(() => {
+  "use strict";
+  if (typeof window.renderCashOrders !== "function") return;
+  window.renderCashOrders = async function(rows) {
+    const el = document.getElementById("cashOrders");
+    if (!el) return { ok: false };
+    if (!rows?.length) {
+      el.innerHTML = '<h4>Comandas do dia</h4><div class="empty">Nenhuma comanda encontrada nesta unidade.</div>';
+      return { ok: true, netByOrder: {} };
+    }
+    const state = await window.paymentStateForOrders(rows.map((x) => x.id));
+    if (!state.ok) {
+      window.reportClientError?.("loadDashboard.orderPayments", state.error);
+      el.innerHTML = '<h4>Comandas do dia</h4><div class="empty">Não foi possível confirmar pagamentos e estornos. Atualize antes de operar.</div>';
+      return state;
+    }
+    const methodLabel = { pix: "PIX", cash: "Dinheiro", debit_card: "Débito", credit_card: "Crédito" };
+    const statusLabel = { open: "Em aberto", closed: "Fechada", cancelled: "Cancelada" };
+    el.innerHTML = '<h4>Comandas do dia</h4>' + rows.map((x) => {
+      const orderAllocations = state.allocations.filter((a) => a.order_id === x.id);
+      const paid = state.netByOrder[x.id] || 0;
+      const remaining = Math.max(0, Number(x.total_amount || 0) - paid);
+      const methods = [...new Set(orderAllocations.map((a) => a.payment_record?.payment_method).filter(Boolean))];
+      const methodText = methods.length > 1 ? `Múltiplos: ${methods.map((m) => methodLabel[m] || m).join(" + ")}` : methods.length === 1 ? methodLabel[methods[0]] || methods[0] : "Sem pagamento alocado";
+      const actions = [];
+      if (x.status === "open" && remaining > 0.005) {
+        actions.push(`<button class="cash-order-action" data-receive-order="${window.esc(x.id)}">Receber ${window.money(remaining)}</button>`);
+      }
+      for (const a of orderAllocations) {
+        const paymentId = a.payment_record?.id;
+        const available = Math.max(0, Number(a.payment_record?.amount || a.amount || 0) - (state.refundedByPayment[paymentId] || 0));
+        if (paymentId && available > 0.005) {
+          const splitLabel = orderAllocations.length > 1 ? ` · ${methodLabel[a.payment_record?.payment_method] || a.payment_record?.payment_method || "Pagamento"}` : "";
+          actions.push(`<button class="cash-order-action refund" data-refund-payment="${window.esc(paymentId)}" data-refund-available="${available}">Estornar ${window.money(available)}${splitLabel}</button>`);
+        }
+      }
+      return `<div class="cash-order ${x.status === "open" ? "open" : "closed"}"><div><strong>${window.esc(x.public_id || "Comanda")}</strong><small>${window.esc(methodText)}</small>${actions.join("")}</div><div class="cash-order-right"><strong>${window.money(x.total_amount)}</strong><small>Pago líquido: ${window.money(paid)}</small><span class="cash-order-status">${window.esc(statusLabel[x.status] || x.status || "—")}</span></div></div>`;
+    }).join("");
+    el.querySelectorAll("[data-receive-order]").forEach((button) => {
+      button.addEventListener("click", () => window.receivePayment(button.dataset.receiveOrder));
+    });
+    el.querySelectorAll("[data-refund-payment]").forEach((button) => {
+      button.addEventListener("click", () => window.refundPayment(button.dataset.refundPayment, Number(button.dataset.refundAvailable)));
+    });
+    return state;
+  };
+})();
