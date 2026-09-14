@@ -1,7 +1,7 @@
 /* Salunea pre-pilot Radar/Estoque preview.
- * Read-only UI against existing tenant-scoped tables/views.
- * Requires the separately reviewed public.detect_radar_signals wrapper for the
- * refresh action; the baseline database does not expose that RPC yet.
+ * Tenant-scoped reads plus controlled, idempotent stock movements.
+ * Radar refresh requires the separately reviewed public.detect_radar_signals
+ * wrapper; failures remain explicit and never fabricate state.
  */
 (() => {
   "use strict";
@@ -22,6 +22,49 @@
   function showError(el, text) {
     if (el) el.innerHTML = `<div class="empty">${safe(text)}</div>`;
   }
+  function stockMount() {
+    const list = document.getElementById("prepilotStockList");
+    if (!list) return null;
+    let mount = document.getElementById("prepilotStockMovementMount");
+    if (!mount) {
+      mount = document.createElement("div");
+      mount.id = "prepilotStockMovementMount";
+      list.parentNode.insertBefore(mount, list);
+    }
+    return mount;
+  }
+  function renderStockMovementForm(unitRows, products) {
+    const mount = stockMount();
+    if (!mount) return;
+    const byProduct = Object.fromEntries((products || []).map(x => [x.id, x]));
+    const options = (unitRows || []).map(x => `<option value="${safe(x.id)}">${safe(byProduct[x.product_id]?.name || "Produto")} · mínimo ${num(x.minimum_stock)}</option>`).join("");
+    mount.innerHTML = `<div class="prepilot-card" style="margin:10px 16px"><strong>Movimentação controlada</strong><p class="muted">Use uma entrada ou saída idempotente. O saldo não pode ficar negativo.</p><div style="display:grid;gap:8px"><label>Produto<select id="prepilotStockProduct">${options}</select></label><label>Tipo<select id="prepilotStockType"><option value="purchase">Entrada / compra</option><option value="adjustment_in">Ajuste de entrada</option><option value="sale">Saída / venda</option><option value="loss">Perda</option><option value="service_consumption">Consumo de serviço</option></select></label><label>Quantidade<input id="prepilotStockQuantity" type="number" min="0.0001" step="0.0001" placeholder="Quantidade absoluta"></label><label>Custo unitário (obrigatório para compra)<input id="prepilotStockCost" type="number" min="0" step="0.0001" placeholder="R$"></label><label>Motivo<input id="prepilotStockReason" maxlength="180" placeholder="Motivo da movimentação"></label><button class="new" type="button" onclick="prepilotSubmitStockMovement()">Registrar movimentação</button><div id="prepilotStockFeedback" class="muted" aria-live="polite"></div></div></div>`;
+  }
+  async function submitStockMovement() {
+    const c = currentCompany(), u = currentUnit(), feedbackEl = document.getElementById("prepilotStockFeedback");
+    const setFeedback = (text, error = false) => { if (feedbackEl) { feedbackEl.textContent = text; feedbackEl.style.color = error ? "#a33" : "#185c37"; } };
+    if (!c || !u || !dbRef()) return;
+    const product = document.getElementById("prepilotStockProduct")?.value;
+    const type = document.getElementById("prepilotStockType")?.value;
+    const quantity = Number(document.getElementById("prepilotStockQuantity")?.value);
+    const costRaw = document.getElementById("prepilotStockCost")?.value;
+    const cost = costRaw === "" ? null : Number(costRaw);
+    const reason = document.getElementById("prepilotStockReason")?.value.trim() || null;
+    const incoming = ["purchase", "adjustment_in", "transfer_in"].includes(type);
+    if (!product || !type || !Number.isFinite(quantity) || quantity <= 0) { setFeedback("Informe produto, tipo e quantidade positiva.", true); return; }
+    if (type === "purchase" && (!Number.isFinite(cost) || cost < 0)) { setFeedback("Compra exige custo unitário válido.", true); return; }
+    const delta = incoming ? quantity : -quantity;
+    const button = document.querySelector("#prepilotStockMovementMount button");
+    if (button) { button.disabled = true; button.textContent = "Registrando…"; }
+    try {
+      const { error } = await dbRef().rpc("record_stock_movement", { p_company_id: c.id, p_unit_id: u.id, p_unit_product_id: product, p_movement_type: type, p_quantity_delta: delta, p_unit_cost_snapshot: cost, p_reason: reason, p_reference_type: null, p_reference_id: null, p_idempotency_key: crypto.randomUUID() });
+      if (error) { report("prepilot.stock.write", error, { companyId: c.id, unitId: u.id, unitProductId: product }); setFeedback("Não foi possível registrar. Nada foi alterado.", true); return; }
+      setFeedback("Movimentação registrada e saldo confirmado.");
+      await loadStock();
+    } catch (e) { report("prepilot.stock.write", e, { companyId: c.id, unitId: u.id, unitProductId: product }); setFeedback("Falha inconclusiva. Atualize para confirmar.", true); }
+    finally { if (button) { button.disabled = false; button.textContent = "Registrar movimentação"; } }
+  }
+  window.prepilotSubmitStockMovement = submitStockMovement;
   function confidenceLabel(value) {
     const labels = { low: "baixa", medium: "média", high: "alta" };
     return labels[String(value || "").toLowerCase()] || "não informada";
@@ -104,7 +147,8 @@
       const byUnit = Object.fromEntries(unitRows.map(x => [x.id, x]));
       const byProduct = Object.fromEntries(products.map(x => [x.id, x]));
       const rows = (stock.data || []).map(x => ({ ...x, ...byUnit[x.unit_product_id], product: byProduct[byUnit[x.unit_product_id]?.product_id] })).filter(x => x.unit_product_id);
-      if (!rows.length) { el.innerHTML = '<div class="empty">Nenhum produto de estoque configurado nesta unidade.</div>'; return; }
+      if (!rows.length) { el.innerHTML = '<div class="empty">Nenhum produto de estoque configurado nesta unidade.</div>'; stockMount()?.replaceChildren(); return; }
+      renderStockMovementForm(unitRows, products);
       const unitLabel = (value) => ({ unit: "unidade", piece: "peça", liter: "litro", kilogram: "quilo", milliliter: "mililitro", gram: "grama" }[String(value || "").toLowerCase()] || value || "unidade");
       el.innerHTML = `<div class="prepilot-card"><table class="prepilot-table"><thead><tr><th>Produto</th><th>Saldo</th><th>Mínimo</th><th>Projetado</th></tr></thead><tbody>${rows.map(x => { const low = Number(x.on_hand || 0) < Number(x.minimum_stock || 0); return `<tr><td><strong>${safe(x.product?.name || "Produto")}</strong><br><span class="muted">${safe(unitLabel(x.product?.unit_of_measure))}</span></td><td>${num(x.on_hand)}</td><td>${num(x.minimum_stock)}</td><td><span class="prepilot-badge ${low ? "warn" : ""}">${num(x.projected_quantity)}${low ? " · abaixo do mínimo" : ""}</span></td></tr>`; }).join("")}</tbody></table></div>`;
     } catch (e) {

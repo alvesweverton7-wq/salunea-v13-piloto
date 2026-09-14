@@ -121,9 +121,23 @@
     </nav>
     <div class="vw-spacer"></div>
     <nav><button data-vw="mais"><span class="vw-ico">⚙</span>Configurações</button></nav>
-    <div class="vw-foot">Piloto controlado gratuito<br>Unidade Principal · São Paulo</div>
+    <div class="vw-foot">Piloto controlado gratuito<br><span id="visualWave1Tenant">Unidade ativa</span></div>
   `;
   app.prepend(aside);
+  const tenantSource = document.getElementById("tenantLabel");
+  const tenantTarget = document.getElementById("visualWave1Tenant");
+  const syncTenant = () => {
+    const label = tenantSource?.textContent?.trim();
+    tenantTarget.textContent = label || "Unidade ativa";
+  };
+  if (tenantSource) {
+    new MutationObserver(syncTenant).observe(tenantSource, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  }
+  syncTenant();
   const sync = (id) => aside.querySelectorAll("button[data-vw]").forEach((b) => b.classList.toggle("active", b.dataset.vw === id));
   const originalGo = window.go;
   window.go = function(id) { const result = originalGo ? originalGo.apply(this, arguments) : undefined; sync(id); setTimeout(decorateAgenda, 0); return result; };

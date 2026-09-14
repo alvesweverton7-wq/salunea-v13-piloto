@@ -819,6 +819,7 @@
       class="modal"
       role="dialog"
       aria-modal="true"
+      aria-hidden="true"
       aria-labelledby="clientModalTitle"
     >
       <div class="sheet">
@@ -850,6 +851,7 @@
       class="modal"
       role="dialog"
       aria-modal="true"
+      aria-hidden="true"
       aria-labelledby="bookingModalTitle"
     >
       <div class="sheet">
@@ -876,6 +878,7 @@
       class="modal"
       role="dialog"
       aria-modal="true"
+      aria-hidden="true"
       aria-labelledby="setupModalTitle"
     >
       <div class="sheet">
@@ -902,6 +905,7 @@
       class="modal"
       role="dialog"
       aria-modal="true"
+      aria-hidden="true"
       aria-labelledby="paymentModalTitle"
     >
       <div class="sheet">
@@ -933,7 +937,7 @@
     ></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
-      const APP_SOURCE_VERSION = "c1-p3-operacao-diaria-preparada-2026-09-13";
+      const APP_SOURCE_VERSION = "c2-p3-operacao-integrada-2026-09-14";
       function reportClientError(kind, error, context = {}) {
         try {
           const cause = error instanceof Error ? error : new Error(String(error ?? "Erro desconhecido"));
@@ -1053,6 +1057,52 @@
           if (idleText) button.textContent = idleText;
         }
       }
+      let activeModal = null;
+      let lastFocusedElement = null;
+      function modalFocusable(modalElement) {
+        return [...modalElement.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])')]
+          .filter((el) => !el.disabled && el.getAttribute("aria-hidden") !== "true");
+      }
+      function showModal(modalElement) {
+        if (!modalElement) return;
+        lastFocusedElement = document.activeElement;
+        activeModal = modalElement;
+        modalElement.classList.add("open");
+        modalElement.setAttribute("aria-hidden", "false");
+        const first = modalFocusable(modalElement)[0];
+        if (first) setTimeout(() => first.focus(), 0);
+      }
+      function hideModal(modalElement) {
+        if (!modalElement) return;
+        modalElement.classList.remove("open");
+        modalElement.setAttribute("aria-hidden", "true");
+        if (activeModal === modalElement) {
+          activeModal = null;
+          const restore = lastFocusedElement;
+          lastFocusedElement = null;
+          if (restore && typeof restore.focus === "function") setTimeout(() => restore.focus(), 0);
+        }
+      }
+      document.addEventListener("keydown", (event) => {
+        if (!activeModal) return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          if (activeModal.id === "clientModal") closeClient();
+          else if (activeModal.id === "modal") closeBooking();
+          else if (activeModal.id === "setupModal") closeSetup();
+          else if (activeModal.id === "paymentModal") closePayment();
+          return;
+        }
+        if (event.key !== "Tab") return;
+        const focusable = modalFocusable(activeModal);
+        if (!focusable.length) return;
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first.focus();
+        }
+      });
       function unexpectedActionError(action, error, context = {}) {
         reportClientError("action", error, { action, ...context });
         feedback(operationalErrorMessage(action), "error");
@@ -1229,6 +1279,10 @@
           ctx.appUser = null;
           ctx.company = null;
           ctx.unit = null;
+          sessionStorage.removeItem("activeCompanyId");
+          Object.keys(sessionStorage)
+            .filter((key) => key.startsWith("activeUnitId:"))
+            .forEach((key) => sessionStorage.removeItem(key));
           email.value = "";
           password.value = "";
           autherr.textContent = "";
@@ -1407,7 +1461,7 @@
           await db.auth.signOut();
           return;
         }
-        const savedCompanyId = localStorage.getItem("activeCompanyId");
+        const savedCompanyId = sessionStorage.getItem("activeCompanyId");
         const companyId = companyIds.includes(savedCompanyId)
           ? savedCompanyId
           : companies[0].id;
@@ -1425,7 +1479,7 @@
           switcher.onchange = () => {
             if (!beginBusyAction("companySwitch", null)) return;
             switcher.disabled = true;
-            localStorage.setItem("activeCompanyId", switcher.value);
+            sessionStorage.setItem("activeCompanyId", switcher.value);
             runBootstrap().finally(() => {
               switcher.disabled = false;
               endBusyAction("companySwitch");
@@ -1443,7 +1497,7 @@
           await db.auth.signOut();
           return;
         }
-        const savedUnitId = localStorage.getItem(`activeUnitId:${companyId}`);
+        const savedUnitId = sessionStorage.getItem(`activeUnitId:${companyId}`);
         const unitId = units.some((x) => x.id === savedUnitId)
           ? savedUnitId
           : units.length === 1
@@ -1459,7 +1513,7 @@
           unitSwitcher.onchange = () => {
             if (!unitSwitcher.value || !beginBusyAction("unitSwitch", null)) return;
             unitSwitcher.disabled = true;
-            localStorage.setItem(`activeUnitId:${companyId}`, unitSwitcher.value);
+            sessionStorage.setItem(`activeUnitId:${companyId}`, unitSwitcher.value);
             runBootstrap().finally(() => {
               unitSwitcher.disabled = false;
               endBusyAction("unitSwitch");
@@ -1811,10 +1865,10 @@
           .toFixed(2)
           .replace(".", ",");
         paymentMethod.value = "pix";
-        paymentModal.classList.add("open");
+        showModal(paymentModal);
       }
       function closePayment() {
-        paymentModal.classList.remove("open");
+        hideModal(paymentModal);
         pendingPaymentOrder = null;
       }
       async function submitPayment() {
@@ -1920,7 +1974,18 @@
         for (const x of allocations || []) paidByOrder[x.order_id] = (paidByOrder[x.order_id] || 0) + Number(x.amount || 0);
         const methodLabel = { pix: "PIX", cash: "Dinheiro", debit_card: "Débito", credit_card: "Crédito" };
         const statusLabel = { open: "Em aberto", closed: "Fechada", cancelled: "Cancelada" };
-        el.innerHTML = "<h4>Comandas do dia</h4>" + rows.map((x) => { const paid = paidByOrder[x.id] || 0; const remaining = Math.max(0, Number(x.total_amount || 0) - paid); const status = statusLabel[x.status] || x.status || "—"; const method = (allocations || []).find((a) => a.order_id === x.id)?.payment_record?.payment_method; return `<div class=\"cash-order ${x.status === "open" ? "open" : "closed"}\"><div><strong>${esc(x.public_id || "Comanda")}</strong><small>${method ? methodLabel[method] || method : "Sem pagamento alocado"}</small>${x.status === "open" && remaining > 0.005 ? `<button class=\"cash-order-action\" onclick=\"receivePayment('${x.id}')\">Receber ${money(remaining)}</button>` : ""}</div><div class=\"cash-order-right\"><strong>${money(x.total_amount)}</strong><small>Pago: ${money(paid)}</small><span class=\"cash-order-status\">${status}</span></div></div>`; }).join("");
+        el.innerHTML = "<h4>Comandas do dia</h4>" + rows.map((x) => {
+          const orderAllocations = (allocations || []).filter((a) => a.order_id === x.id);
+          const paid = paidByOrder[x.id] || 0;
+          const remaining = Math.max(0, Number(x.total_amount || 0) - paid);
+          const hasPartialRefund = orderAllocations.some((a) => a.payment_record?.status === "partially_refunded");
+          const methods = [...new Set(orderAllocations.map((a) => a.payment_record?.payment_method).filter(Boolean))];
+          const methodText = methods.length > 1 ? `Múltiplos: ${methods.map((method) => methodLabel[method] || method).join(" + ")}` : methods.length === 1 ? methodLabel[methods[0]] || methods[0] : "Sem pagamento alocado";
+          const paidText = hasPartialRefund ? "Pago líquido não confirmado (estorno parcial)" : `Pago: ${money(paid)}`;
+          const status = statusLabel[x.status] || x.status || "—";
+          const receiveAction = x.status === "open" && remaining > 0.005 && !hasPartialRefund ? `<button class=\"cash-order-action\" onclick=\"receivePayment('${x.id}')\">Receber ${money(remaining)}</button>` : "";
+          return `<div class=\"cash-order ${x.status === "open" ? "open" : "closed"}\"><div><strong>${esc(x.public_id || "Comanda")}</strong><small>${esc(methodText)}</small>${receiveAction}</div><div class=\"cash-order-right\"><strong>${money(x.total_amount)}</strong><small>${esc(paidText)}</small><span class=\"cash-order-status\">${esc(status)}</span></div></div>`;
+        }).join("");
         return true;
       }
       async function loadDashboard(showConfirmation = false) {
@@ -1967,6 +2032,7 @@
         const cashOrdersOk = await renderCashOrders(allOrders);
         if (!cashOrdersOk) return false;
         let allocatedByOrder = {};
+        let hasPartialRefund = (pays.data || []).some((x) => x.status === "partially_refunded");
         if (openOrders.length) {
           const { data: allocs, error: allocationLookupError } = await db
             .from("payment_allocations")
@@ -1983,6 +2049,7 @@
             feedback("Não foi possível confirmar o saldo das comandas. Atualize a tela.", "error");
             return false;
           }
+          hasPartialRefund ||= (allocs || []).some((x) => x.payment_record?.status === "partially_refunded");
           for (const x of allocs || [])
             allocatedByOrder[x.order_id] =
               (allocatedByOrder[x.order_id] || 0) + Number(x.amount || 0);
@@ -2005,12 +2072,13 @@
             0,
           );
         metricProduction.textContent = money(production);
-        metricAgenda.textContent = `${(ap.data || []).length} atendimento${(ap.data || []).length === 1 ? "" : "s"}`;
-        metricReceived.textContent = money(received);
-        cashReceived.textContent = money(received);
-        cashOpenAmount.textContent = money(open);
+        const activeAppointments = (ap.data || []).filter((x) => !["cancelled", "no_show"].includes(x.status));
+        metricAgenda.textContent = `${activeAppointments.length} atendimento${activeAppointments.length === 1 ? "" : "s"}`;
+        metricReceived.textContent = hasPartialRefund ? "Revisar estorno" : money(received);
+        cashReceived.textContent = hasPartialRefund ? "Revisar estorno" : money(received);
+        cashOpenAmount.textContent = hasPartialRefund ? "Não confirmado" : money(open);
         cashOpenOrders.textContent = String(openOrders.length);
-        if (showConfirmation) feedback("Caixa atualizado com sucesso.");
+        if (showConfirmation) feedback(hasPartialRefund ? "Caixa atualizado, mas há estorno parcial sem valor líquido disponível." : "Caixa atualizado com sucesso.", hasPartialRefund ? "error" : "success");
         return true;
       }
       async function loadBookingOptions() {
@@ -2066,10 +2134,10 @@
         return true;
       }
       function openSetup() {
-        setupModal.classList.add("open");
+        showModal(setupModal);
       }
       function closeSetup() {
-        setupModal.classList.remove("open");
+        hideModal(setupModal);
       }
       async function saveSetup() {
         if (!requireOnline()) return;
@@ -2125,10 +2193,10 @@
       }
 
       function openClient() {
-        clientModal.classList.add("open");
+        showModal(clientModal);
       }
       function closeClient() {
-        clientModal.classList.remove("open");
+        hideModal(clientModal);
       }
       async function saveClient() {
         if (!requireOnline()) return;
@@ -2254,14 +2322,14 @@
         return true;
       }
       function openBooking() {
-        modal.classList.add("open");
+        showModal(modal);
         if (!bookingDate.value) bookingDate.value = selectedAgendaDate || unitDateText();
         loadProfessionalsForService().catch((error) =>
           unexpectedActionError("carregar profissionais", error),
         );
       }
       function closeBooking() {
-        modal.classList.remove("open");
+        hideModal(modal);
       }
       async function saveBooking() {
         if (!requireOnline()) return;
@@ -2347,7 +2415,7 @@
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () =>
           navigator.serviceWorker
-            .register("/sw.js?v=prime-operacional-26")
+            .register("/sw.js?v=prime-operacional-27")
             .catch((error) => reportClientError("service-worker", error)),
         );
       }

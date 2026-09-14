@@ -1,4 +1,4 @@
-const CACHE = "salao-shell-prime-operacional-26";
+const CACHE = "salao-shell-prime-operacional-27";
 const SHELL = [
   "/",
   "/index.html",
