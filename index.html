@@ -287,6 +287,12 @@
       .agenda-toolbar button { min-width:42px; padding:11px 12px; border:1px solid var(--line); border-radius:12px; background:var(--surface); color:var(--text); font-weight:800; }
       .agenda-toolbar .today { min-width:auto; }
       .cash-order-action { margin-top:8px; padding:8px 11px; border:0; border-radius:10px; background:var(--brand); color:#fff; font-weight:800; }
+      .cash-order-action.refund { background:#fff0d7; color:#8a4a00; margin-left:6px; }
+      .cash-session { margin:10px 16px; padding:14px; border:1px solid var(--line); border-radius:14px; background:var(--surface); }
+      .cash-session-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .cash-session-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+      .cash-session-actions button { padding:9px 11px; border:0; border-radius:10px; background:var(--brand); color:#fff; font-weight:800; }
+      .cash-session-actions button.secondary { background:#fff0d7; color:#8a4a00; }
       @media (max-width:560px) { .cash-order { align-items:flex-start; } .cash-order .cash-order-right { text-align:right; } }
       nav {
         position: fixed;
@@ -740,6 +746,9 @@
             <span>Comandas abertas</span><strong id="cashOpenOrders">0</strong>
           </div>
         </div>
+        <div id="cashSessionPanel" class="cash-session" aria-live="polite">
+          <div class="empty">Carregando sessão do caixa…</div>
+        </div>
         <button class="fab" onclick="refreshDashboard(this)">Atualizar caixa</button>
         <div id="cashOrders" class="cash-orders" aria-live="polite"></div>
       </section>
@@ -937,7 +946,7 @@
     ></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
-      const APP_SOURCE_VERSION = "c2-p3-operacao-integrada-2026-09-14";
+      const APP_SOURCE_VERSION = "c3-caixa-estorno-2026-09-14";
       function reportClientError(kind, error, context = {}) {
         try {
           const cause = error instanceof Error ? error : new Error(String(error ?? "Erro desconhecido"));
@@ -1847,7 +1856,13 @@
           feedback("Não foi possível confirmar o saldo desta comanda. Atualize o caixa e tente novamente.", "error");
           return;
         }
-        const alreadyPaid = (allocations || []).reduce((sum, row) => sum + Number(row.amount || 0), 0);
+        const paymentState = await paymentStateForOrders([orderId]);
+        if (!paymentState.ok) {
+          reportClientError("receivePayment.refunds", paymentState.error, { orderId });
+          feedback("Não foi possível confirmar estornos desta comanda. Atualize o caixa.", "error");
+          return;
+        }
+        const alreadyPaid = paymentState.netByOrder[orderId] || 0;
         const remaining = Math.max(0, Number(o.total_amount) - alreadyPaid);
         if (remaining <= 0.005) {
           feedback("Esta comanda não possui saldo pendente.", "error");
@@ -1881,7 +1896,7 @@
         if (!beginBusyAction("submitPayment", paymentSave, "Registrando…")) return;
         const orderId = pendingPaymentOrder.id;
         try {
-          const { error: pe } = await db.rpc("receive_order_payment", {
+          const { error: pe } = await db.rpc("receive_pilot_order_payment", {
             p_order_id: orderId,
             p_payment_method: paymentMethod.value,
             p_amount: amount,
@@ -1959,34 +1974,118 @@
           endBusyAction("refreshDashboard", button, "Atualizar caixa");
         }
       }
+      let activeCashSession = null;
+      async function paymentStateForOrders(orderIds) {
+        if (!orderIds.length) return { ok: true, allocations: [], refundedByPayment: {}, netByOrder: {} };
+        const { data: allocations, error } = await db.from("payment_allocations")
+          .select("order_id,amount,payment_record:payment_records!inner(id,status,payment_method,amount)")
+          .in("order_id", orderIds).in("payment_record.status", ["received", "partially_refunded", "refunded"]);
+        if (error) return { ok: false, error };
+        const paymentIds = [...new Set((allocations || []).map((x) => x.payment_record?.id).filter(Boolean))];
+        let refunds = [];
+        if (paymentIds.length) {
+          const lookup = await db.from("payment_refunds").select("payment_record_id,amount").in("payment_record_id", paymentIds);
+          if (lookup.error) return { ok: false, error: lookup.error };
+          refunds = lookup.data || [];
+        }
+        const refundedByPayment = {};
+        for (const x of refunds) refundedByPayment[x.payment_record_id] = (refundedByPayment[x.payment_record_id] || 0) + Number(x.amount || 0);
+        const netByOrder = {};
+        for (const x of allocations || []) {
+          const net = Math.max(0, Number(x.amount || 0) - (refundedByPayment[x.payment_record?.id] || 0));
+          netByOrder[x.order_id] = (netByOrder[x.order_id] || 0) + net;
+        }
+        return { ok: true, allocations: allocations || [], refundedByPayment, netByOrder };
+      }
       async function renderCashOrders(rows) {
         const el = document.getElementById("cashOrders");
-        if (!el) return false;
-        if (!rows?.length) { el.innerHTML = "<h4>Comandas do dia</h4><div class=\"empty\">Nenhuma comanda encontrada nesta unidade.</div>"; return true; }
-        const ids = rows.map((x) => x.id);
-        const { data: allocations, error: allocationError } = await db.from("payment_allocations").select("order_id,amount,payment_record:payment_records!inner(status,payment_method)").in("order_id", ids).in("payment_record.status", ["received", "partially_refunded"]);
-        if (allocationError) {
-          reportClientError("loadDashboard.orderAllocations", allocationError, { orderIds: ids });
-          el.innerHTML = '<h4>Comandas do dia</h4><div class="empty">Não foi possível confirmar os pagamentos. Os valores permanecem inconclusivos até uma nova atualização.</div>';
-          return false;
+        if (!el) return { ok: false };
+        if (!rows?.length) { el.innerHTML = "<h4>Comandas do dia</h4><div class=\"empty\">Nenhuma comanda encontrada nesta unidade.</div>"; return { ok: true, netByOrder: {} }; }
+        const state = await paymentStateForOrders(rows.map((x) => x.id));
+        if (!state.ok) {
+          reportClientError("loadDashboard.orderPayments", state.error);
+          el.innerHTML = '<h4>Comandas do dia</h4><div class="empty">Não foi possível confirmar pagamentos e estornos. Atualize antes de operar.</div>';
+          return state;
         }
-        const paidByOrder = {};
-        for (const x of allocations || []) paidByOrder[x.order_id] = (paidByOrder[x.order_id] || 0) + Number(x.amount || 0);
         const methodLabel = { pix: "PIX", cash: "Dinheiro", debit_card: "Débito", credit_card: "Crédito" };
         const statusLabel = { open: "Em aberto", closed: "Fechada", cancelled: "Cancelada" };
         el.innerHTML = "<h4>Comandas do dia</h4>" + rows.map((x) => {
-          const orderAllocations = (allocations || []).filter((a) => a.order_id === x.id);
-          const paid = paidByOrder[x.id] || 0;
+          const orderAllocations = state.allocations.filter((a) => a.order_id === x.id);
+          const paid = state.netByOrder[x.id] || 0;
           const remaining = Math.max(0, Number(x.total_amount || 0) - paid);
-          const hasPartialRefund = orderAllocations.some((a) => a.payment_record?.status === "partially_refunded");
           const methods = [...new Set(orderAllocations.map((a) => a.payment_record?.payment_method).filter(Boolean))];
-          const methodText = methods.length > 1 ? `Múltiplos: ${methods.map((method) => methodLabel[method] || method).join(" + ")}` : methods.length === 1 ? methodLabel[methods[0]] || methods[0] : "Sem pagamento alocado";
-          const paidText = hasPartialRefund ? "Pago líquido não confirmado (estorno parcial)" : `Pago: ${money(paid)}`;
-          const status = statusLabel[x.status] || x.status || "—";
-          const receiveAction = x.status === "open" && remaining > 0.005 && !hasPartialRefund ? `<button class=\"cash-order-action\" onclick=\"receivePayment('${x.id}')\">Receber ${money(remaining)}</button>` : "";
-          return `<div class=\"cash-order ${x.status === "open" ? "open" : "closed"}\"><div><strong>${esc(x.public_id || "Comanda")}</strong><small>${esc(methodText)}</small>${receiveAction}</div><div class=\"cash-order-right\"><strong>${money(x.total_amount)}</strong><small>${esc(paidText)}</small><span class=\"cash-order-status\">${esc(status)}</span></div></div>`;
+          const methodText = methods.length > 1 ? `Múltiplos: ${methods.map((m) => methodLabel[m] || m).join(" + ")}` : methods.length === 1 ? methodLabel[methods[0]] || methods[0] : "Sem pagamento alocado";
+          const actions = [];
+          if (x.status === "open" && remaining > 0.005) actions.push(`<button class=\"cash-order-action\" onclick=\"receivePayment('${x.id}')\">Receber ${money(remaining)}</button>`);
+          for (const a of orderAllocations) {
+            const available = Math.max(0, Number(a.payment_record?.amount || a.amount || 0) - (state.refundedByPayment[a.payment_record?.id] || 0));
+            if (available > 0.005) actions.push(`<button class=\"cash-order-action refund\" onclick=\"refundPayment('${a.payment_record.id}',${available})\">Estornar ${money(available)}</button>`);
+          }
+          return `<div class=\"cash-order ${x.status === "open" ? "open" : "closed"}\"><div><strong>${esc(x.public_id || "Comanda")}</strong><small>${esc(methodText)}</small>${actions.join("")}</div><div class=\"cash-order-right\"><strong>${money(x.total_amount)}</strong><small>Pago líquido: ${money(paid)}</small><span class=\"cash-order-status\">${esc(statusLabel[x.status] || x.status || "—")}</span></div></div>`;
         }).join("");
+        return state;
+      }
+
+      async function loadCashSession() {
+        const panel = document.getElementById("cashSessionPanel");
+        if (!panel || !ctx.unit) return false;
+        const { data, error } = await db.from("cash_sessions").select("*")
+          .eq("company_id", ctx.company.id).eq("unit_id", ctx.unit.id).eq("business_date", unitDateText()).maybeSingle();
+        if (error) { reportClientError("loadCashSession", error); panel.innerHTML = '<div class="empty">Sessão do caixa indisponível.</div>'; return false; }
+        activeCashSession = data || null;
+        if (!data) {
+          panel.innerHTML = '<div class="cash-session-row"><div><strong>Caixa não aberto</strong><small>Abra antes de receber dinheiro.</small></div></div><div class="cash-session-actions"><button onclick="openCashSession()">Abrir caixa</button></div>';
+          return true;
+        }
+        const closeInfo = data.status === "closed" ? `<small>Esperado: ${money(data.expected_closing_amount)} · Contado: ${money(data.declared_closing_amount)} · Diferença: ${money(data.variance_amount)}</small>` : `<small>Fundo inicial: ${money(data.opening_amount)}</small>`;
+        const actions = data.status === "open" ? '<div class="cash-session-actions"><button onclick="recordCashMovement(\'inflow\')">+ Suprimento</button><button class="secondary" onclick="recordCashMovement(\'outflow\')">− Sangria</button><button class="secondary" onclick="closeCashSession()">Fechar caixa</button></div>' : '';
+        panel.innerHTML = `<div class="cash-session-row"><div><strong>Caixa ${data.status === "open" ? "aberto" : "fechado"}</strong>${closeInfo}</div><span class="cash-order-status">${esc(data.business_date)}</span></div>${actions}`;
         return true;
+      }
+      async function openCashSession() {
+        if (!requireOnline()) return;
+        const raw = prompt("Fundo inicial em dinheiro (R$):", "0,00");
+        if (raw === null) return;
+        const amount = Number(raw.replace(",", "."));
+        if (!Number.isFinite(amount) || amount < 0) return feedback("Informe um fundo inicial válido.", "error");
+        const { error } = await db.rpc("open_cash_session", { p_company_id: ctx.company.id, p_unit_id: ctx.unit.id, p_opening_amount: amount, p_idempotency_key: crypto.randomUUID(), p_notes: "Abertura pelo aplicativo" });
+        if (error) { reportClientError("openCashSession", error); return feedback(operationalErrorMessage("abrir o caixa"), "error"); }
+        await loadDashboard(); feedback("Caixa aberto com sucesso.", "success");
+      }
+      async function recordCashMovement(type) {
+        if (!requireOnline() || !activeCashSession || activeCashSession.status !== "open") return;
+        const raw = prompt(`${type === "inflow" ? "Suprimento" : "Sangria"} em dinheiro (R$):`);
+        if (raw === null) return;
+        const amount = Number(raw.replace(",", "."));
+        const reason = prompt("Motivo (obrigatório):");
+        if (!Number.isFinite(amount) || amount <= 0 || !reason || reason.trim().length < 3) return feedback("Informe valor e motivo válidos.", "error");
+        const { error } = await db.rpc("record_cash_movement", { p_cash_session_id: activeCashSession.id, p_movement_type: type, p_amount: amount, p_reason: reason.trim(), p_idempotency_key: crypto.randomUUID() });
+        if (error) { reportClientError("recordCashMovement", error); return feedback(operationalErrorMessage("registrar o movimento"), "error"); }
+        await loadDashboard(); feedback("Movimento registrado.", "success");
+      }
+      async function closeCashSession() {
+        if (!requireOnline() || !activeCashSession || activeCashSession.status !== "open") return;
+        const raw = prompt("Total contado no caixa (R$):");
+        if (raw === null) return;
+        const amount = Number(raw.replace(",", "."));
+        if (!Number.isFinite(amount) || amount < 0) return feedback("Informe o total contado.", "error");
+        if (!confirm("Confirmar o fechamento do caixa?")) return;
+        const { data, error } = await db.rpc("close_cash_session", { p_cash_session_id: activeCashSession.id, p_declared_amount: amount, p_notes: "Fechamento pelo aplicativo" });
+        if (error) { reportClientError("closeCashSession", error); return feedback(operationalErrorMessage("fechar o caixa"), "error"); }
+        await loadDashboard(); const result = Array.isArray(data) ? data[0] : data;
+        feedback(`Caixa fechado. Diferença: ${money(result?.variance_amount || 0)}.`, "success");
+      }
+      async function refundPayment(paymentId, available) {
+        if (!requireOnline()) return;
+        const raw = prompt(`Valor a estornar (máximo ${money(available)}):`, Number(available).toFixed(2).replace(".", ","));
+        if (raw === null) return;
+        const amount = Number(raw.replace(",", "."));
+        const reason = prompt("Motivo do estorno (obrigatório):");
+        if (!Number.isFinite(amount) || amount <= 0 || amount - available > 0.005 || !reason || reason.trim().length < 3) return feedback("Informe valor e motivo válidos.", "error");
+        if (!confirm(`Confirmar estorno de ${money(amount)}?`)) return;
+        const { error } = await db.rpc("refund_order_payment", { p_payment_record_id: paymentId, p_amount: amount, p_reason: reason.trim(), p_idempotency_key: crypto.randomUUID() });
+        if (error) { reportClientError("refundPayment", error); return feedback(operationalErrorMessage("estornar o pagamento"), "error"); }
+        await loadDashboard(); feedback("Estorno registrado e caixa recalculado.", "success");
       }
       async function loadDashboard(showConfirmation = false) {
         if (!ctx.unit) return false;
@@ -2007,11 +2106,11 @@
             .eq("status", "performed"),
           db
             .from("payment_records")
-            .select("amount,status,actual_receipt_at")
+            .select("id,amount,status,actual_receipt_at")
             .eq("unit_id", ctx.unit.id)
             .gte("actual_receipt_at", start)
             .lt("actual_receipt_at", end)
-            .in("status", ["received", "partially_refunded"]),
+            .in("status", ["received", "partially_refunded", "refunded"]),
           db
             .from("orders")
             .select("id,public_id,total_amount,status,client_id,created_at,closed_at")
@@ -2029,57 +2128,40 @@
         }
         const allOrders = ords.data || [];
         const openOrders = allOrders.filter((x) => x.status === "open");
-        const cashOrdersOk = await renderCashOrders(allOrders);
-        if (!cashOrdersOk) return false;
-        let allocatedByOrder = {};
-        let hasPartialRefund = (pays.data || []).some((x) => x.status === "partially_refunded");
-        if (openOrders.length) {
-          const { data: allocs, error: allocationLookupError } = await db
-            .from("payment_allocations")
-            .select(
-              "order_id,amount,payment_record:payment_records!inner(status)",
-            )
-            .in(
-              "order_id",
-              openOrders.map((x) => x.id),
-            )
-            .in("payment_record.status", ["received", "partially_refunded"]);
-          if (allocationLookupError) {
-            reportClientError("loadDashboard.allocations", allocationLookupError, { orderIds: openOrders.map((x) => x.id) });
-            feedback("Não foi possível confirmar o saldo das comandas. Atualize a tela.", "error");
-            return false;
-          }
-          hasPartialRefund ||= (allocs || []).some((x) => x.payment_record?.status === "partially_refunded");
-          for (const x of allocs || [])
-            allocatedByOrder[x.order_id] =
-              (allocatedByOrder[x.order_id] || 0) + Number(x.amount || 0);
+        const paymentState = await renderCashOrders(allOrders);
+        if (!paymentState.ok) return false;
+        const todayPaymentIds = (pays.data || []).map((x) => x.id);
+        let refundsToday = [];
+        if (todayPaymentIds.length) {
+          const refundLookup = await db.from("payment_refunds").select("payment_record_id,amount,refunded_at")
+            .in("payment_record_id", todayPaymentIds).gte("refunded_at", start).lt("refunded_at", end);
+          if (refundLookup.error) { reportClientError("loadDashboard.refunds", refundLookup.error); return false; }
+          refundsToday = refundLookup.data || [];
         }
         const production = (ats.data || []).reduce(
             (n, x) => n + Number(x.net_amount || 0),
             0,
           ),
-          received = (pays.data || []).reduce(
-            (n, x) => n + Number(x.amount || 0),
-            0,
-          ),
+          received = (pays.data || []).reduce((n, x) => n + Number(x.amount || 0), 0) - refundsToday.reduce((n, x) => n + Number(x.amount || 0), 0),
           open = openOrders.reduce(
             (n, x) =>
               n +
               Math.max(
                 0,
-                Number(x.total_amount || 0) - (allocatedByOrder[x.id] || 0),
+                Number(x.total_amount || 0) - (paymentState.netByOrder[x.id] || 0),
               ),
             0,
           );
         metricProduction.textContent = money(production);
         const activeAppointments = (ap.data || []).filter((x) => !["cancelled", "no_show"].includes(x.status));
         metricAgenda.textContent = `${activeAppointments.length} atendimento${activeAppointments.length === 1 ? "" : "s"}`;
-        metricReceived.textContent = hasPartialRefund ? "Revisar estorno" : money(received);
-        cashReceived.textContent = hasPartialRefund ? "Revisar estorno" : money(received);
-        cashOpenAmount.textContent = hasPartialRefund ? "Não confirmado" : money(open);
+        metricReceived.textContent = money(received);
+        cashReceived.textContent = money(received);
+        cashOpenAmount.textContent = money(open);
         cashOpenOrders.textContent = String(openOrders.length);
-        if (showConfirmation) feedback(hasPartialRefund ? "Caixa atualizado, mas há estorno parcial sem valor líquido disponível." : "Caixa atualizado com sucesso.", hasPartialRefund ? "error" : "success");
-        return true;
+        const cashSessionOk = await loadCashSession();
+        if (showConfirmation) feedback(cashSessionOk ? "Caixa atualizado com sucesso." : "Valores atualizados, mas a sessão do caixa ficou inconclusiva.", cashSessionOk ? "success" : "error");
+        return cashSessionOk;
       }
       async function loadBookingOptions() {
         const { data: cs, error: clientError } = await db
@@ -2415,7 +2497,7 @@
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () =>
           navigator.serviceWorker
-            .register("/sw.js?v=prime-operacional-28")
+            .register("/sw.js?v=prime-operacional-29")
             .catch((error) => reportClientError("service-worker", error)),
         );
       }
