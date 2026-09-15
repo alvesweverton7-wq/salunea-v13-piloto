@@ -752,6 +752,29 @@
         <button class="fab" onclick="refreshDashboard(this)">Atualizar caixa</button>
         <div id="cashOrders" class="cash-orders" aria-live="polite"></div>
       </section>
+      <section id="atendimento" class="screen">
+        <div class="section head">
+          <div><h3>Atendimento / Comanda</h3><p>Do serviço ao pagamento, em um só fluxo</p></div>
+          <button class="new" type="button" onclick="go('agenda')">Abrir agenda</button>
+        </div>
+        <div id="attendanceSummary" class="metrics"></div>
+        <div id="attendanceWorkspace" class="c12-grid" aria-live="polite"><div class="empty">Carregando atendimentos…</div></div>
+      </section>
+      <section id="relatorios" class="screen">
+        <div class="section head">
+          <div><h3>Relatórios</h3><p>Indicadores reais da unidade selecionada</p></div>
+          <button class="new" type="button" onclick="loadReports(true)">Atualizar</button>
+        </div>
+        <div id="reportMetrics" class="metrics"></div>
+        <div id="reportWorkspace" class="c12-grid" aria-live="polite"><div class="empty">Carregando indicadores…</div></div>
+      </section>
+      <section id="configuracoes" class="screen">
+        <div class="section head">
+          <div><h3>Configurações</h3><p>Empresa, unidade, equipe e catálogo</p></div>
+          <button class="new" type="button" onclick="openSetup()">+ Profissional e serviço</button>
+        </div>
+        <div id="settingsWorkspace" class="c12-grid" aria-live="polite"><div class="empty">Carregando configurações…</div></div>
+      </section>
       <section id="mais" class="screen">
         <div class="section">
           <h3>Mais</h3>
@@ -761,9 +784,9 @@
           <strong>Estoque <small>• beta controlado</small></strong
           ><span>Saldo físico, projetado e itens abaixo do mínimo</span>
         </div>
-        <div class="card" style="margin: 10px 16px">
-          <strong>Financeiro <small>• em preparação</small></strong
-          ><span>Disponível após validação do piloto</span>
+        <div class="card" style="margin: 10px 16px" onclick="go('caixa')">
+          <strong>Financeiro</strong
+          ><span>Recebimentos, comandas, estornos e fechamento</span>
         </div>
         <div class="card" style="margin: 10px 16px" onclick="go('radar')">
           <strong>Radar</strong><span>Problemas, oportunidades e ações</span>
@@ -944,7 +967,7 @@
       aria-atomic="true"
       hidden
     ></div>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0"></script>
     <script>
       const APP_SOURCE_VERSION = "c3-caixa-estorno-2026-09-14";
       function reportClientError(kind, error, context = {}) {
@@ -1907,17 +1930,13 @@
             feedback(operationalErrorMessage("registrar o pagamento"), "error");
             return;
           }
-          const { data: alloc, error: allocationError } = await db
-            .from("payment_allocations")
-            .select("amount,payment_record:payment_records!inner(status)")
-            .eq("order_id", orderId)
-            .in("payment_record.status", ["received", "partially_refunded"]);
-          if (allocationError) {
-            reportClientError("submitPayment.verify", allocationError, { orderId });
-            feedback("Pagamento registrado, mas não foi possível confirmar o saldo. Atualize a tela.", "error");
+          const verifiedState = await paymentStateForOrders([orderId]);
+          if (!verifiedState.ok) {
+            reportClientError("submitPayment.verify", verifiedState.error, { orderId });
+            feedback("Pagamento registrado, mas não foi possível confirmar o saldo líquido. Atualize a tela.", "error");
             return;
           }
-          const paid = (alloc || []).reduce((a, x) => a + Number(x.amount), 0);
+          const paid = verifiedState.netByOrder[orderId] || 0;
           if (paid - pendingPaymentOrder.total > 0.005) {
             feedback("O valor recebido ultrapassa o total da comanda.", "error");
             return;
@@ -2493,11 +2512,12 @@
     </script>
     <script src="/prepilot-radar-stock.js"></script>
     <script src="/visual-wave1.js"></script>
+    <script src="/c12-modules.js"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () =>
           navigator.serviceWorker
-            .register("/sw.js?v=prime-operacional-29")
+            .register("/sw.js?v=c3-caixa-estorno-2026-09-14")
             .catch((error) => reportClientError("service-worker", error)),
         );
       }

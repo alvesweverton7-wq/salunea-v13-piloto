@@ -1,4 +1,4 @@
-const CACHE = "salao-shell-prime-operacional-31";
+const CACHE = "salao-shell-c3-caixa-estorno-2026-09-14";
 const SHELL = [
   "/",
   "/index.html",
@@ -7,6 +7,7 @@ const SHELL = [
   "/icon-512.png",
   "/prepilot-radar-stock.js",
   "/visual-wave1.js",
+  "/c12-modules.js",
 ];
 self.addEventListener("install", (e) =>
   e.waitUntil(

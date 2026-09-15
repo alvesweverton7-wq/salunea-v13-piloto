@@ -18,7 +18,7 @@
     #visualWave1Sidebar .vw-spacer { flex:1; }
     #visualWave1Sidebar .vw-foot { border-top:1px solid #ffffff1b; padding:16px 14px 0; color:#b7c4d5; font-size:11px; }
     #visualWave1Sidebar ~ * { position:relative; }
-    #app .section.head, #app #agenda .section, #app #clientes .section, #app #caixa .section, #app #mais .section, #app #radar .section, #app #estoque .section { padding:0 0 8px; }
+    #app .section.head, #app #agenda .section, #app #clientes .section, #app #caixa .section, #app #atendimento .section, #app #relatorios .section, #app #configuracoes .section, #app #mais .section, #app #radar .section, #app #estoque .section { padding:0 0 8px; }
     #app .section.head h3, #app #caixa h3, #app #mais h3, #app #radar h3, #app #estoque h3 { font-size:34px; letter-spacing:-.045em; margin:0 0 5px; }
     #app .section.head p, #app #caixa .muted, #app #mais .muted, #app #radar .muted, #app #estoque .muted { color:#667387; font-size:14px; }
     #app .new, #app .fab { background:var(--vw-orange); color:#fff; border-radius:11px; padding:12px 16px; font-weight:900; border:0; }
@@ -101,7 +101,7 @@
       #app #inicio .radar { background:var(--vw-navy); color:#fff; border-radius:18px; padding:21px; margin-top:17px; }
       #app #inicio .radar p { color:#cad7e7; }
       #inicio .section { max-width:1200px; }
-      #agenda .section, #clientes .section, #caixa .section, #mais .section, #radar .section, #estoque .section { max-width:1200px; }
+      #agenda .section, #clientes .section, #caixa .section, #atendimento .section, #relatorios .section, #configuracoes .section, #mais .section, #radar .section, #estoque .section { max-width:1200px; }
     }
     @media (max-width:900px) { #visualWave1Sidebar { display:none; } #app { padding-left:0 !important; } #app #inicio .metrics { grid-template-columns:1fr; } }
   `;
@@ -114,13 +114,15 @@
       <button data-vw="inicio" data-go="inicio"><span class="vw-ico">▣</span>Dashboard</button>
       <button data-vw="agenda" data-go="agenda"><span class="vw-ico">▦</span>Agenda</button>
       <button data-vw="clientes" data-go="clientes"><span class="vw-ico">♙</span>Clientes</button>
+      <button data-vw="atendimento" data-go="atendimento"><span class="vw-ico">✂</span>Atendimento</button>
       <button data-vw="caixa" data-go="caixa"><span class="vw-ico">▤</span>Financeiro</button>
       <button data-vw="estoque" data-go="estoque"><span class="vw-ico">◇</span>Estoque</button>
+      <button data-vw="relatorios" data-go="relatorios"><span class="vw-ico">▥</span>Relatórios</button>
       <button data-vw="radar" data-go="radar"><span class="vw-ico">✦</span>Radar beta</button>
       <button data-vw="mais" data-go="mais"><span class="vw-ico">⋯</span>Mais</button>
     </nav>
     <div class="vw-spacer"></div>
-    <nav><button data-vw="mais"><span class="vw-ico">⚙</span>Configurações</button></nav>
+    <nav><button data-vw="configuracoes" data-go="configuracoes"><span class="vw-ico">⚙</span>Configurações</button></nav>
     <div class="vw-foot">Piloto controlado gratuito<br><span id="visualWave1Tenant">Unidade ativa</span></div>
   `;
   app.prepend(aside);
