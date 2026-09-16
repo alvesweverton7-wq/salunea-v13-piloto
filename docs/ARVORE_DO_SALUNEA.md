@@ -1,8 +1,8 @@
 # ÁRVORE DO SALÚNEA — Documento Vivo
 
-**Versão:** 2.2 — ciclo de recuperação e receita pós-B4  
+**Versão:** 2.3 — orquestração event-driven e E2E pós-B5  
 **Data:** 2026-09-16  
-**Status:** B4 aprovado pelo usuário; documentação sincronizada; merge sujeito ao gate de promoção  
+**Status:** B5 aprovado pelo usuário; documentação sincronizada; merge sujeito ao gate de promoção  
 **Autoridade:** este documento registra a arquitetura e o fluxo aprovados do Salúnea. Mudanças técnicas aprovadas devem ser refletidas aqui antes de um bloco ser considerado concluído.
 
 ## 1. Restrições invariantes
@@ -13,12 +13,13 @@
 - Não criar rota arquitetural paralela sem validação humana.
 - Mudanças em branch isolada, com testes e aprovação antes de promoção.
 - `main` não recebe mudança arquitetural sem gate humano explícito.
+- **Ação humana operacional:** sempre que uma etapa exigir que o usuário altere/configure manualmente Supabase ou GitHub, interromper o fluxo automático e avisar explicitamente o usuário com instruções. Não presumir que a ação foi realizada.
 
 ## 2. Baseline técnico oficial
 
 A release candidata C12 do repositório `salunea-v13-piloto` permanece o baseline executável. O ZIP histórico permanece referência visual/histórica.
 
-Componentes: autenticação Supabase; empresa/unidade; Dashboard; Agenda; Clientes; Atendimento/Comanda; Caixa; Estoque/Radar; Relatórios; Configurações; PWA/Service Worker; pagamentos líquidos após estornos. B3 adiciona recorrência/Radar de cliente; B4 adiciona ação e atribuição auditável de retorno/receita no backend dev.
+Componentes: autenticação Supabase; empresa/unidade; Dashboard; Agenda; Clientes; Atendimento/Comanda; Caixa; Estoque/Radar; Relatórios; Configurações; PWA/Service Worker; pagamentos líquidos após estornos. B3 adiciona recorrência/Radar de cliente; B4 adiciona ação e atribuição auditável de retorno/receita; B5 adiciona orquestração event-driven, E2E integrado e observabilidade do ciclo Radar no backend dev.
 
 ## 3. Árvore funcional
 
@@ -53,7 +54,9 @@ SALÚNEA
 │   │   ├── política calibrável por empresa
 │   │   └── insufficient_history / normal / attention / at_risk / late
 │   ├── Radar de risco
-│   │   └── `revenue_risk`
+│   │   ├── `revenue_risk`
+│   │   ├── ciclo unificado geral + recuperação
+│   │   └── observabilidade em audit_logs
 │   ├── Recuperação de cliente
 │   │   ├── oportunidade estimada
 │   │   ├── ação rastreável
@@ -71,8 +74,9 @@ SALÚNEA
 
 ```text
 Nome + Telefone → cliente dentro da empresa → agendamento/atendimento
-→ atendimento concluído → visita comercial → histórico → recorrência
-→ Radar de risco → ação de recuperação → contato → retorno elegível
+→ atendimento concluído → comanda aberta → gatilho event-driven do Radar
+→ visita comercial → histórico → recorrência → Radar de risco
+→ ação de recuperação → contato → retorno elegível
 → atendimento concluído → order fechado → pagamentos - estornos
 → receita recuperada segundo regra de atribuição Salúnea
 ```
@@ -92,39 +96,41 @@ Cancelamento/no-show não contam como visita concluída. Múltiplos atendimentos
 
 ## 6. Contrato de Recuperação e Receita — B4
 
-### 6.1 Ação
-`client_recovery_actions` registra empresa, unidade, cliente, sinal Radar, canal, status, timestamps, responsável, atendimento/order atribuídos e `recovered_revenue`.
+`client_recovery_actions` registra empresa, unidade, cliente, sinal Radar, canal, status, timestamps, responsável, atendimento/order atribuídos e `recovered_revenue`. Mutações ocorrem por RPC controlada. WhatsApp exige opt-in válido. Conversão exige atendimento completed posterior ao contato, mesma empresa/cliente, order fechado e janela válida. `converted` é atribuição operacional, não prova causal.
 
-Authenticated possui leitura direta conforme `radar.read`; mutações ocorrem por RPC controlada. Criação exige `radar.manage` e `clients.read`; IDs são validados dentro da empresa.
+`recovered_revenue` = pagamentos alocados menos estornos, piso zero. `impact_amount` permanece oportunidade estimada. Janela usa ciclo individual robusto + tolerância late, com teto opcional. Índices únicos evitam dupla atribuição do mesmo attendance/order.
 
-### 6.2 Consentimento
-Canal `whatsapp` exige `whatsapp_opt_in=true` e ausência de revogação. O MVP não depende de API paga de mensageria; contato pode ser operacional/manual.
+## 7. Orquestração e observabilidade — B5
 
-### 6.3 Conversão
-Uma ação contatada somente converte quando existe atendimento `completed` posterior ao contato, do mesmo cliente/empresa, com `order` fechado e dentro da janela de atribuição.
+### 7.1 Ciclo unificado
+`app/public.run_radar_cycle(company, unit)` é o ponto único para executar o detector Radar geral e o detector de recuperação. A execução exige `radar.manage`; o detector de recuperação mantém `clients.read`. Fronteiras company/unit são preservadas e tentativa cross-tenant foi bloqueada em validação.
 
-`converted` significa retorno elegível associado à ação segundo regra operacional; não constitui prova científica de causalidade.
+### 7.2 Gatilho event-driven
+`public.complete_attendance_and_open_order` preserva `app.complete_attendance_and_open_order` como autoridade da operação comercial. Após a conclusão/abertura da comanda, tenta executar o ciclo Radar da mesma empresa/unidade quando a sessão também possui `radar.manage`.
 
-### 6.4 Receita recuperada
-`recovered_revenue` = pagamentos alocados ao order atribuído menos estornos, com piso zero. Retorno 100% estornado pode permanecer `converted` com receita R$0.
+O Radar é auxiliar: falha da inteligência não deve desfazer atendimento/comanda. Não há dependência obrigatória de scheduler externo, Make ou mensageria paga para esse gatilho.
 
-`impact_amount` do Radar continua sendo oportunidade estimada e nunca deve ser apresentado como receita recuperada.
+### 7.3 E2E validado
+Cenário reversível validou:
 
-### 6.5 Janela dinâmica
-A atribuição usa o ciclo individual robusto do B3 mais a tolerância `late` da política de recorrência. `recovery_attribution_days`, quando explicitamente configurado, funciona como teto máximo.
+```text
+agendamento → atendimento → conclusão → Radar → ação de recuperação
+→ contato → retorno → comanda → pagamento → fechamento
+→ conversão → receita recuperada líquida
+```
 
-Sem ciclo suficiente e sem política explícita, a atribuição automática falha de forma fechada e não inventa prazo global.
+No cenário controlado, order R$80 resultou em ação `converted` e `recovered_revenue=R$80`; transação foi revertida ao final, sem persistência artificial.
 
-Com defaults atuais de piloto, exemplos teóricos: ciclo 15 → ~23 dias; 30 → 45; 45 → ~68; 60 → 90. São parâmetros de piloto, não regra universal do setor.
+### 7.4 Observabilidade
+O ciclo Radar reutiliza `audit_logs` append-only. Eventos previstos: `radar.cycle.completed` e tentativa de `radar.cycle.failed`. O teste de sucesso observado registrou general=1, recovery=0 e 36 ms; esse tempo é evidência do cenário, não SLA.
 
-### 6.6 Idempotência e anti-dupla-contagem
-Índices únicos impedem o mesmo attendance/order de ser atribuído a ações diferentes. Reprocessar a mesma ação mantém a mesma conversão/valor. Teste verdadeiramente simultâneo em sessões independentes permanece desejável antes de produção.
+Rotinas `app/public.run_radar_cycle` permanecem sem execução para anon/PUBLIC.
 
-## 7. Isolamento e ambientes — custo zero
+## 8. Isolamento e ambientes — custo zero
 
 Durante desenvolvimento/piloto não criar infraestrutura paga para isolamento. Estratégia: isolamento lógico por empresa, RLS, permissões no banco, testes reversíveis, branches Git e ausência de segredos privados no frontend/repositório. Separação física só após piloto e autorização explícita de custo.
 
-## 8. Fluxo de desenvolvimento
+## 9. Fluxo de desenvolvimento
 
 ```text
 ÁRVORE/requisito → branch isolada → implementação → validação estática
@@ -132,14 +138,16 @@ Durante desenvolvimento/piloto não criar infraestrutura paga para isolamento. E
 → atualização da ÁRVORE/evolução → merge/promoção autorizada → próximo bloco
 ```
 
-## 9. Sequência pós-C12
+Quando uma etapa exigir ação manual do usuário no Supabase ou GitHub, o processo deve sinalizar **AÇÃO HUMANA NECESSÁRIA**, indicar exatamente o que fazer e aguardar confirmação antes de continuar.
+
+## 10. Sequência pós-C12
 
 1. Sincronizar Árvore/baseline C12. **Concluído.**
 2. Fechar gates C12 sem custo. **Em evolução contínua.**
 3. Nome + Telefone. **Base auditada; canonicalização BR permanece hardening separado.**
 4. Motor de Recorrência. **B3 concluído e promovido.**
-5. Radar → ação → retorno → receita recuperada. **B4 aprovado; backend dev validado; documentação sincronizada; aguardando promoção.**
-6. Orquestração automática Radar/recuperação sem custo + E2E/hardening.
+5. Radar → ação → retorno → receita recuperada. **B4 concluído e promovido.**
+6. Orquestração automática Radar/recuperação sem custo + E2E/hardening. **B5 aprovado; backend dev validado; documentação sincronizada; aguardando promoção.**
 7. UI/indicadores de recuperação e validação visual desktop/mobile.
 8. Base44 somente com ganho comprovado sem substituir baseline.
 9. Refinar assets visuais sem alterar arquitetura funcional.
@@ -147,29 +155,31 @@ Durante desenvolvimento/piloto não criar infraestrutura paga para isolamento. E
 11. Piloto 3–10 empresas.
 12. Materiais comerciais após evidência do piloto.
 
-## 10. Definição de pronto
+## 11. Definição de pronto
 
 Bloco somente é concluído com implementação/configuração; testes/evidências; custo adicional R$0; ausência de divergência não autorizada; validação humana; Árvore e evolução sincronizadas; próximo gate identificado.
 
-## 11. Registro de Evolução
+## 12. Registro de Evolução
 
 | Data | Bloco | Alteração | Módulos/arquivos | Impacto | Evidência/Teste | Status | Próximo gate |
 |---|---|---|---|---|---|---|---|
 | 2026-09-16 | B1 | Auditoria Árvore × ZIP × GitHub | documentação/C12 | C12 baseline | auditoria/release | validado | B2 |
 | 2026-09-16 | B2 | Sincronização arquitetural | `docs/ARVORE_DO_SALUNEA.md` | documento vivo/custo zero | branch + validação | concluído | B3 |
 | 2026-09-16 | B3 | Recorrência + financeiro líquido + Radar | migrations B3B–B3H | histórico → ciclo → risco | relatório B3/regressões | concluído/merge main | B4 |
-| 2026-09-16 | B4 | Ação de recuperação + retorno atribuível + receita líquida + janela dinâmica | migrations B4A/B4C/B4E; `client_recovery_actions`; RPCs | fecha Radar → ação → retorno → receita recuperada sem mensageria paga obrigatória | `docs/RELATORIO_VALIDACAO_B4_RECUPERACAO_2026-09-16.md`; cross-tenant; consentimento; estorno; idempotência; anti-dupla-contagem; janela dinâmica | aprovado pelo usuário / documentação sincronizada | abrir PR e gate de promoção |
+| 2026-09-16 | B4 | Ação de recuperação + retorno atribuível + receita líquida + janela dinâmica | migrations B4A/B4C/B4E | Radar → ação → retorno → receita | relatório B4 | concluído/merge main | B5 |
+| 2026-09-16 | B5 | Ciclo Radar unificado + gatilho event-driven + E2E + observabilidade | migrations B5A/B5B/B5D; relatório B5C/B5 | operação → inteligência → recuperação → receita | E2E reversível R$80; cross-tenant; idempotência; audit log | aprovado pelo usuário / documentação sincronizada | abrir PR e gate de promoção |
 
-## 12. Pendências deliberadas pós-B4
+## 13. Pendências deliberadas pós-B5
 
-- Calibrar thresholds/janela com evidência real do piloto.
 - Canonicalizar telefone brasileiro (+55/DDD/variações).
-- Avaliar recorrência específica por serviço após evidência.
-- Orquestrar ciclo geral Radar + recuperação sem custo recorrente obrigatório.
-- Implementar UI de ação, conversão e receita recuperada.
+- Implementar UI/indicadores de ação, conversão e receita recuperada.
+- Browser E2E com cinco identidades e validação visual desktop/mobile.
 - Executar concorrência simultânea multi-sessão antes de produção.
-- Normalizar convenção/versionamento das migrations entre GitHub e histórico Supabase antes da promoção final.
+- Testar carga/latência em volume representativo do piloto e, se necessário, throttling interno sem serviço externo.
+- Exercitar observabilidade de falha em cenário controlado.
+- Calibrar thresholds/janela com evidência real do piloto.
+- Normalizar convenção/versionamento das migrations antes da promoção final.
 
-## 13. Regra de manutenção documental
+## 14. Regra de manutenção documental
 
 Toda alteração aprovada registra o que mudou, módulos/arquivos, motivo, impacto, dependências, evidência, status e próximo gate. Código e Árvore não evoluem de forma independente.
