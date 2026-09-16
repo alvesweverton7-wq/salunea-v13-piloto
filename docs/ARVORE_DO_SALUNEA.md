@@ -1,26 +1,24 @@
 # ÁRVORE DO SALÚNEA — Documento Vivo
 
-**Versão:** 2.1 — recorrência e Radar pós-B3  
+**Versão:** 2.2 — ciclo de recuperação e receita pós-B4  
 **Data:** 2026-09-16  
-**Status:** B3 aprovado pelo usuário; documentação sincronizada; merge ainda sujeito ao gate de promoção  
+**Status:** B4 aprovado pelo usuário; documentação sincronizada; merge sujeito ao gate de promoção  
 **Autoridade:** este documento registra a arquitetura e o fluxo aprovados do Salúnea. Mudanças técnicas aprovadas devem ser refletidas aqui antes de um bloco ser considerado concluído.
 
 ## 1. Restrições invariantes
 
 - Custo de produção e piloto: **R$ 0**. Usar somente free tiers, open-source ou recursos sem ônus.
-- Preservar a arquitetura multi-tenant e os fluxos aprovados.
-- `tenant_id`/empresa é a fronteira lógica de isolamento dos dados.
+- Preservar arquitetura multi-tenant e fluxos aprovados; empresa/tenant é a fronteira lógica de isolamento.
+- RLS e autorização no banco; nenhuma confiança em filtro apenas de frontend.
 - Não criar rota arquitetural paralela sem validação humana.
-- Mudanças devem ocorrer em bloco isolado, com teste e aprovação antes do próximo bloco.
-- A branch `main` não deve receber mudanças de arquitetura sem validação do bloco correspondente.
+- Mudanças em branch isolada, com testes e aprovação antes de promoção.
+- `main` não recebe mudança arquitetural sem gate humano explícito.
 
 ## 2. Baseline técnico oficial
 
-A release candidata C12 do repositório `salunea-v13-piloto` é o **baseline executável**.
+A release candidata C12 do repositório `salunea-v13-piloto` permanece o baseline executável. O ZIP histórico permanece referência visual/histórica.
 
-O ZIP histórico permanece como referência visual/histórica e não substitui automaticamente a C12.
-
-Componentes existentes na C12: autenticação Supabase; seleção de empresa/unidade; Dashboard; Agenda; Clientes; Atendimento/Comanda; Caixa; Estoque/Radar; Relatórios; Configurações; PWA/Service Worker; correção financeira de pagamentos líquidos após estornos.
+Componentes: autenticação Supabase; empresa/unidade; Dashboard; Agenda; Clientes; Atendimento/Comanda; Caixa; Estoque/Radar; Relatórios; Configurações; PWA/Service Worker; pagamentos líquidos após estornos. B3 adiciona recorrência/Radar de cliente; B4 adiciona ação e atribuição auditável de retorno/receita no backend dev.
 
 ## 3. Árvore funcional
 
@@ -40,10 +38,6 @@ SALÚNEA
 │   ├── Frequência
 │   └── Ciclo de retorno
 ├── Agenda
-│   ├── Agendamento
-│   ├── Reagendamento
-│   ├── Cancelamento
-│   └── No-show
 ├── Atendimento / Comanda
 ├── Serviços
 ├── Profissionais
@@ -57,12 +51,17 @@ SALÚNEA
 │   │   ├── visita comercial por dia local da unidade
 │   │   ├── mediana dos últimos intervalos
 │   │   ├── política calibrável por empresa
-│   │   └── estados: insufficient_history / normal / attention / at_risk / late
+│   │   └── insufficient_history / normal / attention / at_risk / late
 │   ├── Radar de risco
-│   │   └── sinal de recuperação `revenue_risk`
-│   ├── Receita em risco
+│   │   └── `revenue_risk`
 │   ├── Recuperação de cliente
-│   └── Receita recuperada
+│   │   ├── oportunidade estimada
+│   │   ├── ação rastreável
+│   │   ├── canal + consentimento
+│   │   ├── contato comprovado
+│   │   ├── retorno atribuído
+│   │   └── anti-dupla-contagem
+│   └── Receita recuperada líquida
 ├── Relatórios
 ├── Configurações
 └── Administração / Master
@@ -71,125 +70,106 @@ SALÚNEA
 ## 4. Fluxo central do cliente
 
 ```text
-Nome + Telefone
-      ↓
-Normalização do telefone
-      ↓
-Busca dentro da empresa/tenant
-      ↓
-┌───────────────┬────────────────┐
-│ não encontrado│ encontrado     │
-↓               ↓
-Criar cliente   Recuperar cliente
-└───────┬───────┴───────┬────────┘
-        ↓               ↓
-        Agendamento / Atendimento
-                ↓
-        Atendimento concluído
-                ↓
-     Consolidar visita comercial
-        (dia local da unidade)
-                ↓
-          Atualizar histórico
-                ↓
-        Recalcular recorrência
-                ↓
-   Mediana dos intervalos recentes
-                ↓
-   Classificar estado de recorrência
-                ↓
-            Radar de risco
-                ↓
-        Ação de recuperação
-                ↓
-          Receita recuperada
+Nome + Telefone → cliente dentro da empresa → agendamento/atendimento
+→ atendimento concluído → visita comercial → histórico → recorrência
+→ Radar de risco → ação de recuperação → contato → retorno elegível
+→ atendimento concluído → order fechado → pagamentos - estornos
+→ receita recuperada segundo regra de atribuição Salúnea
 ```
 
-Cancelamento e no-show não são visita concluída. Múltiplos atendimentos concluídos no mesmo dia comercial contam como uma visita para recorrência, sem eliminar seus efeitos financeiros válidos.
+Cancelamento/no-show não contam como visita concluída. Múltiplos atendimentos no mesmo dia comercial contam como uma visita para recorrência, preservando efeitos financeiros válidos.
 
-## 5. Contrato do Motor de Recorrência — B3
+## 5. Motor de Recorrência — B3
 
-- Unidade de retorno: **visita comercial**, agrupada pela data local do timezone da unidade.
-- Fonte: somente `attendances.status = completed` com `completed_at` válido.
+- Visita comercial agrupada pela data local do timezone da unidade.
+- Fonte: `attendances.status = completed` com `completed_at` válido.
+- Ciclo: mediana dos últimos N intervalos positivos; N default 5, configurável.
 - Histórico insuficiente não produz ciclo artificial.
-- Estimador de ciclo do piloto: **mediana dos últimos N intervalos positivos**, default N=5, configurável em `recurrence_policies`.
-- Os defaults de atenção/risco (20%/mínimo 3 dias; 50%/mínimo 7 dias) são **hipóteses calibráveis do piloto**, não regra universal do setor.
-- Estados: `insufficient_history`, `normal`, `attention`, `at_risk`, `late`.
-- Receita histórica: pagamentos alocados vinculados aos atendimentos concluídos menos estornos correspondentes, sempre dentro da empresa.
-- Ticket médio: receita líquida histórica / número de visitas comerciais.
-- Perfil em `client_recurrence_profiles` é cache derivado: usuários autenticados podem lê-lo conforme `clients.read`, mas não escrevê-lo diretamente.
-- Recalculo ocorre por RPC controlada `SECURITY DEFINER`, com autenticação e autorização.
-- Radar de recuperação usa sinal existente da família `revenue_risk`; oportunidade financeira de um retorno usa o ticket líquido por visita como evidência/impacto no MVP.
-- O detector de recuperação exige autorização de Radar e leitura de clientes; acesso anônimo é vedado.
+- Defaults de atenção/risco são hipóteses calibráveis do piloto.
+- Receita histórica líquida = pagamentos alocados menos estornos.
+- `client_recurrence_profiles` é cache derivado; authenticated lê conforme `clients.read`, sem escrita direta.
+- Radar `revenue_risk` usa ticket líquido histórico como oportunidade estimada, não como receita garantida.
 
-## 6. Isolamento e ambientes — regra de custo zero
+## 6. Contrato de Recuperação e Receita — B4
 
-Durante desenvolvimento e piloto, não criar projetos pagos ou infraestrutura adicional para obter isolamento ambiental.
+### 6.1 Ação
+`client_recovery_actions` registra empresa, unidade, cliente, sinal Radar, canal, status, timestamps, responsável, atendimento/order atribuídos e `recovered_revenue`.
 
-Estratégia aprovada: isolamento lógico por empresa/tenant; RLS e verificações de permissão no banco; operações de teste reversíveis quando aplicável; dados de ensaio identificáveis/controlados; branches Git; nenhum segredo privado no frontend/repositório.
+Authenticated possui leitura direta conforme `radar.read`; mutações ocorrem por RPC controlada. Criação exige `radar.manage` e `clients.read`; IDs são validados dentro da empresa.
 
-A separação física em múltiplos projetos/instâncias somente poderá ser reconsiderada após o piloto e mediante autorização explícita de custo.
+### 6.2 Consentimento
+Canal `whatsapp` exige `whatsapp_opt_in=true` e ausência de revogação. O MVP não depende de API paga de mensageria; contato pode ser operacional/manual.
 
-## 7. Fluxo de desenvolvimento
+### 6.3 Conversão
+Uma ação contatada somente converte quando existe atendimento `completed` posterior ao contato, do mesmo cliente/empresa, com `order` fechado e dentro da janela de atribuição.
+
+`converted` significa retorno elegível associado à ação segundo regra operacional; não constitui prova científica de causalidade.
+
+### 6.4 Receita recuperada
+`recovered_revenue` = pagamentos alocados ao order atribuído menos estornos, com piso zero. Retorno 100% estornado pode permanecer `converted` com receita R$0.
+
+`impact_amount` do Radar continua sendo oportunidade estimada e nunca deve ser apresentado como receita recuperada.
+
+### 6.5 Janela dinâmica
+A atribuição usa o ciclo individual robusto do B3 mais a tolerância `late` da política de recorrência. `recovery_attribution_days`, quando explicitamente configurado, funciona como teto máximo.
+
+Sem ciclo suficiente e sem política explícita, a atribuição automática falha de forma fechada e não inventa prazo global.
+
+Com defaults atuais de piloto, exemplos teóricos: ciclo 15 → ~23 dias; 30 → 45; 45 → ~68; 60 → 90. São parâmetros de piloto, não regra universal do setor.
+
+### 6.6 Idempotência e anti-dupla-contagem
+Índices únicos impedem o mesmo attendance/order de ser atribuído a ações diferentes. Reprocessar a mesma ação mantém a mesma conversão/valor. Teste verdadeiramente simultâneo em sessões independentes permanece desejável antes de produção.
+
+## 7. Isolamento e ambientes — custo zero
+
+Durante desenvolvimento/piloto não criar infraestrutura paga para isolamento. Estratégia: isolamento lógico por empresa, RLS, permissões no banco, testes reversíveis, branches Git e ausência de segredos privados no frontend/repositório. Separação física só após piloto e autorização explícita de custo.
+
+## 8. Fluxo de desenvolvimento
 
 ```text
-ÁRVORE / requisito aprovado
-        ↓
-Branch isolada
-        ↓
-Implementação
-        ↓
-Validação estática
-        ↓
-Testes funcionais / segurança
-        ↓
-Relatório técnico
-        ↓
-VALIDAÇÃO HUMANA
-        ↓
-Atualização da ÁRVORE + registro de evolução
-        ↓
-Merge / promoção autorizada
-        ↓
-Próximo bloco
+ÁRVORE/requisito → branch isolada → implementação → validação estática
+→ testes funcionais/segurança → relatório → VALIDAÇÃO HUMANA
+→ atualização da ÁRVORE/evolução → merge/promoção autorizada → próximo bloco
 ```
 
-## 8. Sequência de execução pós-C12
+## 9. Sequência pós-C12
 
-1. Sincronizar Árvore e baseline C12. **Concluído.**
-2. Fechar gates técnicos já pendentes da C12 sem custo. **Em evolução contínua.**
-3. Auditar e fechar `Nome + Telefone` como identidade operacional do cliente. **Base auditada; canonicalização BR permanece hardening separado.**
-4. Completar Motor de Recorrência. **B3 aprovado e validado.**
-5. Completar Radar → ação → receita recuperada. **Detector de recuperação integrado; orquestração automática e fechamento de receita recuperada seguem como próximo bloco.**
-6. Executar hardening e E2E multi-tenant.
-7. Validar visual desktop/mobile.
-8. Usar Base44 apenas onde houver ganho comprovado sem substituir baseline/arquitetura.
+1. Sincronizar Árvore/baseline C12. **Concluído.**
+2. Fechar gates C12 sem custo. **Em evolução contínua.**
+3. Nome + Telefone. **Base auditada; canonicalização BR permanece hardening separado.**
+4. Motor de Recorrência. **B3 concluído e promovido.**
+5. Radar → ação → retorno → receita recuperada. **B4 aprovado; backend dev validado; documentação sincronizada; aguardando promoção.**
+6. Orquestração automática Radar/recuperação sem custo + E2E/hardening.
+7. UI/indicadores de recuperação e validação visual desktop/mobile.
+8. Base44 somente com ganho comprovado sem substituir baseline.
 9. Refinar assets visuais sem alterar arquitetura funcional.
-10. Automatizar provisionamento somente com solução compatível com custo zero.
-11. Piloto com 3–10 empresas.
-12. Produzir materiais comerciais após evidência do piloto.
+10. Automatizar provisionamento somente com solução custo zero.
+11. Piloto 3–10 empresas.
+12. Materiais comerciais após evidência do piloto.
 
-## 9. Definição de pronto de um bloco
+## 10. Definição de pronto
 
-Um bloco somente é **CONCLUÍDO** quando todos os itens aplicáveis estiverem satisfeitos: implementação/configuração; testes/evidências; custo adicional R$0; ausência de divergência não autorizada; validação humana; Árvore atualizada; Registro de Evolução atualizado; próximo gate identificado.
+Bloco somente é concluído com implementação/configuração; testes/evidências; custo adicional R$0; ausência de divergência não autorizada; validação humana; Árvore e evolução sincronizadas; próximo gate identificado.
 
-## 10. Registro de Evolução
+## 11. Registro de Evolução
 
 | Data | Bloco | Alteração | Módulos/arquivos | Impacto | Evidência/Teste | Status | Próximo gate |
 |---|---|---|---|---|---|---|---|
-| 2026-09-16 | B1 | Auditoria Árvore × ZIP × GitHub | documentação/C12 | C12 definida como baseline executável | auditoria do repositório e relatório C12 | validado pelo usuário | B2 |
-| 2026-09-16 | B2 | Sincronização arquitetural e protocolo documental | `docs/ARVORE_DO_SALUNEA.md` | documento vivo + custo zero + fluxo pós-C12 | branch documental isolada e merge aprovado | concluído | B3 |
-| 2026-09-16 | B3 | Motor de recorrência + financeiro líquido + Radar de recuperação + hardening | migrations B3B–B3H; `client_recurrence_profiles`; `recurrence_policies`; RPCs de recorrência/Radar | transforma histórico concluído em ciclo, risco e oportunidade financeira multi-tenant | `docs/RELATORIO_VALIDACAO_B3_RECORRENCIA_RADAR_2026-09-16.md`; regressão real; cenários reversíveis; isolamento; estorno; Radar positivo | aprovado pelo usuário / documentação sincronizada | preparar merge PR #4 e iniciar Radar → ação → receita recuperada |
+| 2026-09-16 | B1 | Auditoria Árvore × ZIP × GitHub | documentação/C12 | C12 baseline | auditoria/release | validado | B2 |
+| 2026-09-16 | B2 | Sincronização arquitetural | `docs/ARVORE_DO_SALUNEA.md` | documento vivo/custo zero | branch + validação | concluído | B3 |
+| 2026-09-16 | B3 | Recorrência + financeiro líquido + Radar | migrations B3B–B3H | histórico → ciclo → risco | relatório B3/regressões | concluído/merge main | B4 |
+| 2026-09-16 | B4 | Ação de recuperação + retorno atribuível + receita líquida + janela dinâmica | migrations B4A/B4C/B4E; `client_recovery_actions`; RPCs | fecha Radar → ação → retorno → receita recuperada sem mensageria paga obrigatória | `docs/RELATORIO_VALIDACAO_B4_RECUPERACAO_2026-09-16.md`; cross-tenant; consentimento; estorno; idempotência; anti-dupla-contagem; janela dinâmica | aprovado pelo usuário / documentação sincronizada | abrir PR e gate de promoção |
 
-## 11. Pendências deliberadas pós-B3
+## 12. Pendências deliberadas pós-B4
 
-- Calibrar thresholds com evidência real do piloto.
-- Canonicalizar telefone brasileiro (+55/DDD/variações) sem quebrar unicidade por empresa.
-- Avaliar recorrência específica por serviço após evidência de necessidade.
-- Orquestrar atualização periódica do perfil e detector de recuperação sem custo adicional.
-- Fechar ciclo de ação de recuperação e contabilização de receita recuperada.
-- Normalizar convenção/versionamento das migrations entre repositório e histórico aplicado do Supabase antes da promoção final de ambiente.
+- Calibrar thresholds/janela com evidência real do piloto.
+- Canonicalizar telefone brasileiro (+55/DDD/variações).
+- Avaliar recorrência específica por serviço após evidência.
+- Orquestrar ciclo geral Radar + recuperação sem custo recorrente obrigatório.
+- Implementar UI de ação, conversão e receita recuperada.
+- Executar concorrência simultânea multi-sessão antes de produção.
+- Normalizar convenção/versionamento das migrations entre GitHub e histórico Supabase antes da promoção final.
 
-## 12. Regra de manutenção documental
+## 13. Regra de manutenção documental
 
-Toda alteração aprovada registra: o que mudou; módulo/arquivos; motivo; impacto; dependências/integrações; teste/evidência; status; posição no fluxo e próximo gate. A documentação faz parte da entrega técnica. Código e Árvore não podem evoluir de forma independente.
+Toda alteração aprovada registra o que mudou, módulos/arquivos, motivo, impacto, dependências, evidência, status e próximo gate. Código e Árvore não evoluem de forma independente.
