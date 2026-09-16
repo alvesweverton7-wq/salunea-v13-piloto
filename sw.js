@@ -1,4 +1,4 @@
-const CACHE = "salao-shell-c3-caixa-estorno-2026-09-14";
+const CACHE = "salunea-shell-b6-2026-09-16-v2";
 const SHELL = [
   "/",
   "/index.html",
@@ -9,6 +9,12 @@ const SHELL = [
   "/visual-wave1.js",
   "/c12-modules.js",
 ];
+const NETWORK_FIRST_ASSETS = new Set([
+  "/visual-wave1.js",
+  "/prepilot-radar-stock.js",
+  "/c12-modules.js",
+  "/sw.js",
+]);
 self.addEventListener("install", (e) =>
   e.waitUntil(
     caches
@@ -45,6 +51,20 @@ self.addEventListener("fetch", (e) => {
           return r;
         })
         .catch(() => caches.match("/index.html")),
+    );
+    return;
+  }
+  if (u.origin === location.origin && NETWORK_FIRST_ASSETS.has(u.pathname)) {
+    e.respondWith(
+      fetch(e.request)
+        .then((r) => {
+          if (r.ok) {
+            const copy = r.clone();
+            caches.open(CACHE).then((c) => c.put(e.request, copy));
+          }
+          return r;
+        })
+        .catch(() => caches.match(e.request)),
     );
     return;
   }
