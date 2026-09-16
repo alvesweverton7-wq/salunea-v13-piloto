@@ -10,7 +10,7 @@
     #visualWave1Sidebar .vw-mark { width:30px; height:30px; display:grid; place-items:center; color:var(--vw-deep); background:var(--vw-coral); border-radius:10px 10px 10px 3px; font:700 19px Georgia,serif; }
     #visualWave1Sidebar .vw-brand { font-size:23px; font-weight:800; letter-spacing:-.04em; }
     #visualWave1Sidebar .vw-sub { display:block; color:#a9bdb5; font-size:10px; margin-top:1px; }
-    #visualWave1Sidebar nav { position:static !important; inset:auto !important; width:100% !important; max-width:none !important; min-height:0 !important; margin:0 !important; padding:0 !important; background:transparent !important; backdrop-filter:none !important; border:0 !important; z-index:auto !important; display:grid !important; grid-template-columns:1fr !important; gap:4px; }
+    #visualWave1Sidebar .vw-nav { position:static; width:100%; min-height:0; margin:0; padding:0; background:transparent; border:0; display:grid; grid-template-columns:1fr; gap:4px; }
     #visualWave1Sidebar button { width:100%; border:0; border-radius:8px; background:transparent; color:#dce7e1; padding:11px 12px; text-align:left; font:700 12px/1.2 Manrope,system-ui,sans-serif; cursor:pointer; min-height:0; }
     #visualWave1Sidebar button:hover { background:#ffffff0d; }
     #visualWave1Sidebar button.active { background:#ffffff12; color:#fff; box-shadow:inset 2px 0 var(--vw-coral); }
@@ -69,7 +69,7 @@
   aside.id = "visualWave1Sidebar";
   aside.innerHTML = `
     <div class="vw-logo"><div class="vw-mark">S</div><div><div class="vw-brand">Salúnea</div><span class="vw-sub">Gestão de salão</span></div></div>
-    <nav>
+    <div class="vw-nav" role="navigation" aria-label="Navegação principal">
       <button data-vw="inicio" data-go="inicio"><span class="vw-ico">▣</span>Dashboard</button>
       <button data-vw="agenda" data-go="agenda"><span class="vw-ico">▦</span>Agenda</button>
       <button data-vw="clientes" data-go="clientes"><span class="vw-ico">♙</span>Clientes</button>
@@ -79,9 +79,9 @@
       <button data-vw="relatorios" data-go="relatorios"><span class="vw-ico">▥</span>Relatórios</button>
       <button data-vw="radar" data-go="radar"><span class="vw-ico">✦</span>Radar beta</button>
       <button data-vw="mais" data-go="mais"><span class="vw-ico">⋯</span>Mais</button>
-    </nav>
+    </div>
     <div class="vw-spacer"></div>
-    <nav><button data-vw="configuracoes" data-go="configuracoes"><span class="vw-ico">⚙</span>Configurações</button></nav>
+    <div class="vw-nav" role="navigation" aria-label="Configurações"><button data-vw="configuracoes" data-go="configuracoes"><span class="vw-ico">⚙</span>Configurações</button></div>
     <div class="vw-foot">Piloto controlado gratuito<br><span id="visualWave1Tenant">Unidade ativa</span></div>
   `;
   app.prepend(aside);
