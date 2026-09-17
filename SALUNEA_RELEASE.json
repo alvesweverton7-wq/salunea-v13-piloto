@@ -14,7 +14,7 @@
     "ref": "daehpcxdomjkxwzcyehe",
     "postgres_major": 17,
     "region": "sa-east-1",
-    "latest_observed_migration": "20260917_v051_legacy_public_policy_hardening",
+    "latest_observed_migration": "20260917172834_v051_legacy_public_policy_hardening",
     "pre_existing_drift_after_b5": [
       "20260917035409_c13_brazil_phone_canonicalization",
       "20260917050526_harden_app_function_execute_permissions"
@@ -32,8 +32,9 @@
   "gates": {
     "git_db_reconciliation": "partial_pass_security_and_legacy_public_policy_hardened;_pre_existing_c13_and_function_hardening_drift_documented",
     "security_review": "partial_pass_zero_anon_security_definer_execute;_search_path_present_on_all_22;_authorization_core_has_permission_can_access_company_unit_verified;_21_authenticated_definers_reviewed;_legacy_helpers_retained_for_compatibility",
-    "e2e_validation": "pending",
-    "pwa_cache_validation": "pending",
+    "e2e_validation": "pending_authenticated_cross_tenant_and_financial_idempotency_tests",
+    "pwa_cache_validation": "code_fixed_release_linked_cache_salunea-v0.5.1-2026-09-17;_browser_validation_pending",
+    "ci_release_gate": "added_on_release_branch;_workflow_execution_pending",
     "auth_leaked_password_protection": "pending_dashboard_configuration",
     "production_promotion": "blocked_until_all_gates_pass"
   }
