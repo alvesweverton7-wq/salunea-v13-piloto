@@ -6,7 +6,21 @@ export type AgendaProfessional={id:string;name:string};
 export type AgendaItem={id:string;client_id:string|null;service_id:string|null;professional_id:string|null;starts_at:string;ends_at:string;status:string;notes:string|null};
 export type AgendaLabels={services:Record<string,string>;professionals:Record<string,string>};
 
-export async function listAgendaClients(companyId:string,search=''){let query=supabase.from('clients').select('id,full_name,phone').eq('company_id',companyId).eq('status','active').is('archived_at',null).order('full_name').limit(50);const term=search.trim();if(term)query=query.or(`full_name.ilike.%${term}%,phone.ilike.%${term}%`);const {data,error}=await query;if(error)throw error;return (data??[]) as AgendaClient[];}
+function escapeLike(value:string){return value.replace(/\\/g,'\\\\').replace(/%/g,'\\%').replace(/_/g,'\\_');}
+
+export async function listAgendaClients(companyId:string,search=''){
+ const base=()=>supabase.from('clients').select('id,full_name,phone').eq('company_id',companyId).eq('status','active').is('archived_at',null).order('full_name').limit(50);
+ const term=search.trim();
+ if(!term){const {data,error}=await base();if(error)throw error;return(data??[]) as AgendaClient[];}
+ const pattern=`%${escapeLike(term)}%`;
+ const [nameResult,phoneResult]=await Promise.all([
+  base().ilike('full_name',pattern),
+  base().ilike('phone',pattern)
+ ]);
+ if(nameResult.error)throw nameResult.error;if(phoneResult.error)throw phoneResult.error;
+ const merged=[...(nameResult.data??[]),...(phoneResult.data??[])].reduce((map,row)=>{map.set(row.id,row);return map;},new Map<string,AgendaClient>());
+ return [...merged.values()].sort((a,b)=>a.full_name.localeCompare(b.full_name,'pt-BR')).slice(0,50) as AgendaClient[];
+}
 export async function getAgendaClient(companyId:string,clientId:string){const {data,error}=await supabase.from('clients').select('id,full_name,phone').eq('company_id',companyId).eq('id',clientId).eq('status','active').is('archived_at',null).maybeSingle();if(error)throw error;return (data??null) as AgendaClient|null;}
 export async function listBookableServices(companyId:string,unitId:string){const {data,error}=await supabase.from('unit_services').select('service_id,current_price,default_duration_minutes,services!inner(id,name,status,archived_at)').eq('company_id',companyId).eq('unit_id',unitId).eq('status','active').eq('booking_enabled',true).is('archived_at',null).eq('services.status','active').is('services.archived_at',null);if(error)throw error;return (data??[]).map((row:any)=>({id:row.service_id,name:row.services.name,price:Number(row.current_price),duration:Number(row.default_duration_minutes)})) as AgendaService[];}
 export async function listProfessionalsForService(companyId:string,unitId:string,serviceId:string){const {data,error}=await supabase.from('professional_services').select('professional_id,professionals!inner(id,display_name,full_name,status,archived_at)').eq('company_id',companyId).eq('unit_id',unitId).eq('service_id',serviceId).eq('status','active').eq('can_perform',true).is('archived_at',null).eq('professionals.status','active').is('professionals.archived_at',null);if(error)throw error;return (data??[]).map((row:any)=>({id:row.professional_id,name:row.professionals.display_name||row.professionals.full_name})) as AgendaProfessional[];}
