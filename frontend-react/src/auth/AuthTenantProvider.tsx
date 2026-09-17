@@ -35,11 +35,11 @@ export function AuthTenantProvider({children}:{children:ReactNode}){
   const unit=units.find(x=>x.id===saved)??(units.length===1?units[0]:null);
   setState({status:unit?'ready':'needs_unit',user,appUser,companies,company,units,unit,error:null});
  }
- async function signIn(email:string,password:string){const {error}=await supabase.auth.signInWithPassword({email,password});if(error)return 'E-mail ou senha inválidos.';await bootstrap();return null;}
+ async function signIn(email:string,password:string){const {error}=await supabase.auth.signInWithPassword({email,password});if(error)return 'E-mail ou senha inválidos.';return null;}
  async function signOut(){await supabase.auth.signOut({scope:'local'});sessionStorage.removeItem('activeCompanyId');setState({...initial,status:'signed_out'});}
  async function selectCompany(id:string){const company=state.companies.find(x=>x.id===id);if(!company||!state.user||!state.appUser)return;await resolveUnits(state.user,state.appUser,state.companies,company);}
  function selectUnit(id:string){const unit=state.units.find(x=>x.id===id);if(!unit||!state.company)return;sessionStorage.setItem(`activeUnitId:${state.company.id}`,unit.id);setState(s=>({...s,unit,status:'ready'}));}
- useEffect(()=>{let active=true;void bootstrap();const {data:{subscription}}=supabase.auth.onAuthStateChange((event,session)=>{if(!active)return;if(!session?.user){setState({...initial,status:'signed_out'});return;}if(event==='SIGNED_IN'||event==='USER_UPDATED')void bootstrap();});return()=>{active=false;subscription.unsubscribe();};},[]);
+ useEffect(()=>{let active=true;let timer:number|undefined;const scheduleBootstrap=()=>{if(timer!==undefined)window.clearTimeout(timer);timer=window.setTimeout(()=>{if(active)void bootstrap()},0)};scheduleBootstrap();const {data:{subscription}}=supabase.auth.onAuthStateChange((event,session)=>{if(!active)return;if(!session?.user){setState({...initial,status:'signed_out'});return;}if(event==='SIGNED_IN'||event==='USER_UPDATED'||event==='TOKEN_REFRESHED')scheduleBootstrap();});return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);subscription.unsubscribe();};},[]);
  const value=useMemo(()=>({...state,signIn,signOut,selectCompany,selectUnit,reload:bootstrap}),[state]);
  return <AuthTenantContext.Provider value={value}>{children}</AuthTenantContext.Provider>;
 }
