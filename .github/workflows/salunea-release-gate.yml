@@ -1,0 +1,80 @@
+name: Salunea Release Gate
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            index.html
+            manifest.webmanifest
+            sw.js
+            _headers
+            _redirects
+            c12-modules.js
+            prepilot-radar-stock.js
+            SALUNEA_RELEASE.json
+          )
+          for file in "${required[@]}"; do
+            test -f "$file" || { echo "Missing required release artifact: $file"; exit 1; }
+          done
+
+      - name: Validate release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('SALUNEA_RELEASE.json')
+          data = json.loads(p.read_text())
+          assert data.get('product') == 'Salunea'
+          assert data.get('release') == '0.5.1'
+          assert data.get('release_policy', {}).get('production_publish') is False
+          assert data.get('release_policy', {}).get('company_unit_model_is_canonical') is True
+          print('Release manifest OK')
+          PY
+
+      - name: Validate migration files are present and UTF-8 SQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d supabase/migrations
+          count=$(find supabase/migrations -type f -name '*.sql' | wc -l)
+          test "$count" -gt 0
+          while IFS= read -r file; do
+            python - "$file" <<'PY'
+          import sys
+          from pathlib import Path
+          Path(sys.argv[1]).read_text(encoding='utf-8')
+          PY
+          done < <(find supabase/migrations -type f -name '*.sql' | sort)
+          echo "Validated $count SQL migration files"
+
+      - name: Block accidental production enablement
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          data = json.load(open('SALUNEA_RELEASE.json', encoding='utf-8'))
+          if data['release_policy']['production_publish'] is not False:
+              raise SystemExit('Production publish must remain disabled until release gates pass')
+          if data['gates']['production_promotion'] != 'blocked_until_all_gates_pass':
+              raise SystemExit('Production promotion gate must remain blocked')
+          PY
