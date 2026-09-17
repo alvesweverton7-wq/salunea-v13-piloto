@@ -6,12 +6,14 @@ on:
       - feat/react-convergence
     paths:
       - 'frontend-react/**'
+      - 'vercel.json'
       - '.github/workflows/ci-cd.yml'
   pull_request:
     branches:
       - main
     paths:
       - 'frontend-react/**'
+      - 'vercel.json'
       - '.github/workflows/ci-cd.yml'
   workflow_dispatch:
 
