@@ -31,7 +31,7 @@
   },
   "gates": {
     "git_db_reconciliation": "partial_pass_security_and_legacy_public_policy_hardened;_pre_existing_c13_and_function_hardening_drift_documented",
-    "security_review": "partial_pass_zero_anon_security_definer_execute;_21_authenticated_definers_require_function_by_function_review",
+    "security_review": "partial_pass_zero_anon_security_definer_execute;_search_path_present_on_all_22;_authorization_core_has_permission_can_access_company_unit_verified;_21_authenticated_definers_reviewed;_legacy_helpers_retained_for_compatibility",
     "e2e_validation": "pending",
     "pwa_cache_validation": "pending",
     "auth_leaked_password_protection": "pending_dashboard_configuration",
