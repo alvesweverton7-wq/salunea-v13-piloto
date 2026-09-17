@@ -1,0 +1,35 @@
+{
+  "product": "Salunea",
+  "release": "0.5.1",
+  "status": "reconciliation",
+  "environment": "staging-candidate",
+  "git": {
+    "repository": "alvesweverton7-wq/salunea-v13-piloto",
+    "base_branch": "main",
+    "release_branch": "release/v0.5.1-reconciliation-2026-09-17",
+    "base_commit": "a17a91f003c8941f026ed76f052a464f9f53d0f8"
+  },
+  "database": {
+    "project": "salao-saas-v1-dev",
+    "ref": "daehpcxdomjkxwzcyehe",
+    "postgres_major": 17,
+    "region": "sa-east-1",
+    "reconciliation_required": true,
+    "latest_observed_migration": "20260917050526_harden_app_function_execute_permissions"
+  },
+  "release_policy": {
+    "production_publish": false,
+    "schema_changes_require_versioned_migration": true,
+    "legacy_architecture_frozen": true,
+    "company_unit_model_is_canonical": true,
+    "pwa_cache_must_be_release_linked": true,
+    "critical_actions_require_authorization": true
+  },
+  "gates": {
+    "git_db_reconciliation": "pending",
+    "security_review": "pending",
+    "e2e_validation": "pending",
+    "pwa_cache_validation": "pending",
+    "production_promotion": "blocked_until_all_gates_pass"
+  }
+}
