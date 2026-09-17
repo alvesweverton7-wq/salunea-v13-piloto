@@ -1,0 +1,6 @@
+{
+  "buildCommand": "npm run build --prefix frontend-react",
+  "outputDirectory": "frontend-react/dist",
+  "framework": "vite",
+  "installCommand": "npm install --prefix frontend-react --no-audit --no-fund"
+}
