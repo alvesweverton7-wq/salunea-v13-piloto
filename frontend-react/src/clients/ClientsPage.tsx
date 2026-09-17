@@ -3,9 +3,10 @@ import { Search,UserPlus,X } from 'lucide-react';
 import { useAuthTenant } from '../auth/AuthTenantProvider';
 import { createClient,hasActiveWhatsappConsent,listActiveClients,type ClientRow } from './clientService';
 
-export function ClientsPage(){const {company}=useAuthTenant();const [rows,setRows]=useState<ClientRow[]>([]);const [status,setStatus]=useState<'loading'|'ready'|'error'>('loading');const [query,setQuery]=useState('');const [open,setOpen]=useState(false);const [name,setName]=useState('');const [phone,setPhone]=useState('');const [saving,setSaving]=useState(false);const [formError,setFormError]=useState<string|null>(null);
+export function ClientsPage({focusClientId=null}:{focusClientId?:string|null}){const {company}=useAuthTenant();const [rows,setRows]=useState<ClientRow[]>([]);const [status,setStatus]=useState<'loading'|'ready'|'error'>('loading');const [query,setQuery]=useState('');const [open,setOpen]=useState(false);const [name,setName]=useState('');const [phone,setPhone]=useState('');const [saving,setSaving]=useState(false);const [formError,setFormError]=useState<string|null>(null);
  async function load(){if(!company)return;setStatus('loading');try{setRows(await listActiveClients(company.id));setStatus('ready');}catch{setStatus('error');}}
  useEffect(()=>{void load();},[company?.id]);
+ useEffect(()=>{if(!focusClientId)return;const client=rows.find(x=>x.id===focusClientId);if(client)setQuery(client.full_name)},[focusClientId,rows]);
  const filtered=useMemo(()=>{const q=query.trim().toLocaleLowerCase('pt-BR');if(!q)return rows;return rows.filter(x=>`${x.full_name} ${x.phone??''}`.toLocaleLowerCase('pt-BR').includes(q));},[rows,query]);
  function close(){if(saving)return;setOpen(false);setName('');setPhone('');setFormError(null)}
  async function submit(e:FormEvent){e.preventDefault();if(!company)return;const clean=name.trim();if(!clean){setFormError('Informe o nome do cliente.');return}setSaving(true);setFormError(null);try{await createClient(company.id,clean,phone);await load();setSaving(false);setOpen(false);setName('');setPhone('');setFormError(null)}catch{setFormError('Não foi possível cadastrar o cliente. Confira nome e telefone; se o número já pertencer a um cliente ativo desta empresa, localize o cadastro existente.');setSaving(false)}}
