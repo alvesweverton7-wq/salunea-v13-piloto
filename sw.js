@@ -1,4 +1,4 @@
-const CACHE = "salao-shell-c3-caixa-estorno-2026-09-14";
+const CACHE = "salunea-v0.5.1-2026-09-17";
 const SHELL = [
   "/",
   "/index.html",
