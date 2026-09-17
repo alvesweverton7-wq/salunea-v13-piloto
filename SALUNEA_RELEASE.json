@@ -34,7 +34,7 @@
     "security_review": "partial_pass_zero_anon_security_definer_execute;_search_path_present_on_all_22;_authorization_core_has_permission_can_access_company_unit_verified;_21_authenticated_definers_reviewed;_legacy_helpers_retained_for_compatibility",
     "e2e_validation": "pending_authenticated_cross_tenant_and_financial_idempotency_tests",
     "pwa_cache_validation": "code_fixed_release_linked_cache_salunea-v0.5.1-2026-09-17;_browser_validation_pending",
-    "ci_release_gate": "added_on_release_branch;_workflow_execution_pending",
+    "ci_release_gate": "passed_run_35253786882_on_head_740357c71b4c0b1d89456f290068ead2623e8810",
     "auth_leaked_password_protection": "pending_dashboard_configuration",
     "production_promotion": "blocked_until_all_gates_pass"
   }
