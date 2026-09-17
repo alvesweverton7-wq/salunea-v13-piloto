@@ -8,4 +8,10 @@ export async function listActiveClients(companyId:string){
  return (data??[]) as ClientRow[];
 }
 
+export async function createClient(companyId:string,fullName:string,phone:string){
+ const {data,error}=await supabase.rpc('create_client',{p_company_id:companyId,p_full_name:fullName.trim(),p_phone:phone.trim()||null});
+ if(error)throw error;
+ return data as ClientRow;
+}
+
 export function hasActiveWhatsappConsent(client:ClientRow){return Boolean(client.whatsapp_opt_in&&client.whatsapp_consent_at&&client.whatsapp_consent_source&&client.whatsapp_consent_version&&!client.whatsapp_revoked_at&&client.phone_digits);}
