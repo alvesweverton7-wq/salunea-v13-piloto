@@ -14,8 +14,12 @@
     "ref": "daehpcxdomjkxwzcyehe",
     "postgres_major": 17,
     "region": "sa-east-1",
-    "reconciliation_required": true,
-    "latest_observed_migration": "20260917050526_harden_app_function_execute_permissions"
+    "latest_observed_migration": "20260917172558_v051_security_definer_revoke_public_execute",
+    "pre_existing_drift_after_b5": [
+      "20260917035409_c13_brazil_phone_canonicalization",
+      "20260917050526_harden_app_function_execute_permissions"
+    ],
+    "reconciliation_required": true
   },
   "release_policy": {
     "production_publish": false,
@@ -26,10 +30,11 @@
     "critical_actions_require_authorization": true
   },
   "gates": {
-    "git_db_reconciliation": "pending",
-    "security_review": "pending",
+    "git_db_reconciliation": "blocked_by_pre_existing_c13_and_function_hardening_drift",
+    "security_review": "partial_pass_two_public_definer_helpers_hardened;_remaining_21_authenticated_definers_require_function_by_function_review",
     "e2e_validation": "pending",
     "pwa_cache_validation": "pending",
+    "auth_leaked_password_protection": "pending_dashboard_configuration",
     "production_promotion": "blocked_until_all_gates_pass"
   }
 }
